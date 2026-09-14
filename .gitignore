@@ -1,0 +1,25 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter / IPython
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Output media generated during runs
+*.gif
+*.mp4
+*.png.bak
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
