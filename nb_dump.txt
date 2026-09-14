@@ -1,0 +1,828 @@
+--- cell 0 (markdown) ---
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MarioSigal/TP_Rompecabezas/blob/main/TP_Rompecabezas_Colab.ipynb)
+
+# 🧩 Trabajo Práctico: Resolución Automatizada de Rompecabezas
+**Procesamiento de Imágenes (PDI)**}
+
+**Grupo:**
+
+**Integrantes:**
+
+---
+
+## 🎯 Objetivo General
+El objetivo es reconstruir imágenes fragmentadas a partir de un conjunto de piezas desordenadas y afectadas por diversas degradaciones sintéticas de procesamiento digital de imágenes.
+
+El trabajo está estructurado en **5 Niveles de diagnostico del problema y resolución del rompecabezas, junto con un Ejercicio Final Integrador**:
+- **Nivel 1 — Ruido Espacial:** Piezas cuadradas con 6 variantes de ruido mixto. Detección automática y **filtrado espacial adaptativo** (mediana, gaussiano, mínimo, máximo).
+- **Nivel 2 — Degradación Cromática:** Piezas cuadradas con una transformación de color distinta por pieza.
+- **Nivel 3 — Filtrado en Frecuencia (Fourier):** Piezas cuadradas con ruido periódico sinusoidal (muaré). **Transformada 2D de Fourier (FFT)** y **filtros de muesca (Notch Filters)**.
+- **Nivel 4 — Encastres Geométricos:** Piezas con contornos curvos analíticos (salientes, entrantes y planos). **Análisis morfológico de contornos** y acople complementario.
+- **Nivel 5 — Rotaciones, Encastres y Detección Espectral:** Piezas con encastres curvos rotadas con modulación periódica horizontal. Estimación de orientación por pico espectral en **FFT 2D**.
+
+> **Regla de oro de la cátedra:** El algoritmo reconstructor es el mismo y se les entrega listo. Ustedes diseñan el pipeline de limpieza y la **función de compatibilidad** entre piezas:
+> ```python
+> def mi_compatibilidad(pieza_a, pieza_b, relacion: str) -> float:
+>     # relacion es 'horizontal' (B a la derecha de A) o 'vertical' (B abajo de A)
+>     # Cuanto MENOR sea el valor retornado, mayor es la compatibilidad.
+>     ...
+> ```
+
+
+
+--- cell 1 (markdown) ---
+---
+## ⚙️ Configuración del Entorno de Ejecución
+
+Esta celda configura automáticamente las rutas necesarias tanto si se ejecuta en **Google Colab** como en un entorno local de Jupyter.
+
+
+--- cell 2 (code) ---
+# Configuración de entorno para Google Colab y ejecución local
+import os, sys
+from pathlib import Path
+
+if 'google.colab' in str(get_ipython()):
+    print('--> Entorno detectado: Google Colab')
+    if not os.path.exists('core'):
+        !git clone https://github.com/MarioSigal/TP_Rompecabezas.git repo_tp
+        %cd repo_tp
+        !git checkout main
+    sys.path.insert(0, os.getcwd())
+else:
+    print('--> Entorno detectado: Local')
+    raiz = Path.cwd()
+    if (raiz / 'core').exists():
+        sys.path.insert(0, str(raiz))
+    elif (raiz / 'TP_Rompecabezas' / 'core').exists():
+        sys.path.insert(0, str(raiz / 'TP_Rompecabezas'))
+    elif (raiz / 'TP_FINAL_ALUMNOS' / 'core').exists():
+        sys.path.insert(0, str(raiz / 'TP_FINAL_ALUMNOS'))
+
+import numpy as np
+import cv2
+import matplotlib.pyplot as plt
+
+# Importar funciones del núcleo del TP
+from core import (
+    cargar_imagen,
+    guardar_imagen,
+    preparar_imagen_base,
+    crear_rompecabezas_nivel,
+    crear_dataset_desafio_30,
+    reconstruir_rompecabezas,
+    reconstruir_desde_afinidades,
+    construir_matrices_afinidad,
+    compatibilidad_baseline,
+    generar_reporte_completo,
+    imprimir_reporte,
+)
+
+from utils import (
+    mostrar_piezas_desordenadas,
+    mostrar_comparacion_imagen,
+    mostrar_espectro_fourier,
+    mostrar_reconstruccion,
+    crear_animacion,
+)
+
+print('✅ ¡Módulos del TP cargados con éxito!')
+
+
+--- cell 3 (code) ---
+VARIANTE_CROMATICA_POR_IMAGE={
+    "IMAGEN_1.png" : "value",
+    "IMAGEN_2.png" : "matiz",
+}
+
+--- cell 4 (code) ---
+from pathlib import Path
+
+CARPETA_DATASET = Path("content/imagenes/dataset_desafio")
+
+rutas_imagenes = sorted(
+        p for p in CARPETA_DATASET.iterdir()
+        if p.suffix.lower() in EXTENSIONES_VALIDAS
+    )
+
+
+puzzles = []
+for ruta_imagen in rutas_imagenes:
+    imagen = cargar_imagen(ruta_imagen)
+    variante_cromatica = VARIANTE_CROMATICA_POR_IMAGE[file_path.name]
+    puzzle = crear_rompecabezas_nivel(
+        imagen,
+        nivel=6,
+        filas=8,
+        columnas=8,
+        semilla=101,
+        variante_cromatica= variante_cromatica
+    )
+    puzzles.append(puzzle)
+
+--- cell 5 (code) ---
+def detectar_tipo_ruido(piezas: list) -> dict:
+    """
+
+    Retorna un diccionario con el diagnóstico, por ejemplo:
+    {
+        'tiene_sal': bool,
+        'tiene_pimienta': bool,
+        'tiene_continuo': bool,
+        'tipo': str
+    }
+    """
+    ###COMPLETAR
+
+    return {'tiene_sal': True, 'tiene_pimienta': True, 'tiene_continuo': True, 'tipo': 'mixto'}
+
+
+def filtrar_pieza(pieza: np.ndarray, diagnostico: dict = None) -> np.ndarray:
+    """
+    Limpia la pieza adaptando el filtro espacial según el diagnóstico detectado:
+    - Si tiene sal y/o pimienta: ...
+    - Si tiene ruido continuo: ...
+    Recibe y retorna la pieza en float64 [0.0, 1.0] RGB.
+    """
+    ###COMPLETAR
+
+    return pieza
+
+--- cell 6 (code) ---
+def compatibilidad_baseline(
+    pieza_a: np.ndarray,
+    pieza_b: np.ndarray,
+    relacion: str,
+) -> float:
+    """
+    Calcula el costo de acople entre dos piezas usando el error cuadratico medio (Baseline).
+    El cuadrado (en vez de valor absoluto) penaliza mucho mas fuerte los saltos grandes y
+    casi no penaliza los chicos, lo que agudiza la separacion entre vecinos verdaderos
+    (saltos chicos) y falsos (saltos grandes).
+    Cuanto MENOR sea el resultado, mayor es la similitud de los bordes.
+
+    Parámetros:
+    pieza_a: np.ndarray
+        Pieza base (origen).
+    pieza_b: np.ndarray
+        Pieza vecina propuesta.
+    relacion: str
+        'horizontal' (B a la derecha de A) o 'vertical' (B abajo de A).
+
+    Retorna:
+    float
+        Valor de error/costo promedio entre las líneas externas de los bordes.
+
+    Ejemplo de uso
+    --------------
+    >>> pieza_1 = np.ones((30, 30, 3)) * 100
+    >>> pieza_2 = np.ones((30, 30, 3)) * 105
+    >>> costo = compatibilidad_baseline(pieza_1, pieza_2, relacion="horizontal")
+    >>> print(f"Costo de poner pieza_2 a la derecha de pieza_1: {costo:.1f}")
+    Costo de poner pieza_2 a la derecha de pieza_1: 250.0
+    """
+    if relacion not in BORDES_ENFRENTADOS:
+        raise ValueError(f"Relación inválida: '{relacion}'. Se espera 'horizontal' o 'vertical'.")
+
+    lado_a, lado_b = BORDES_ENFRENTADOS[relacion]
+    banda_a = extraer_banda_borde(pieza_a, lado_a, cantidad_lineas=1)
+    banda_b = extraer_banda_borde(pieza_b, lado_b, cantidad_lineas=1)
+
+    if banda_a.shape[0] != banda_b.shape[0]:
+        n_samples = min(banda_a.shape[0], banda_b.shape[0])
+        idx_a = np.linspace(0, banda_a.shape[0] - 1, n_samples).astype(int)
+        idx_b = np.linspace(0, banda_b.shape[0] - 1, n_samples).astype(int)
+        banda_a = banda_a[idx_a]
+        banda_b = banda_b[idx_b]
+
+    #Error cuadratico en vez de absoluto: penaliza mucho mas fuerte los saltos
+    #grandes y casi no penaliza los chicos, lo que agudiza la separacion entre
+    #vecinos verdaderos (saltos chicos) y falsos (saltos grandes)
+    return float(np.linalg.norm(banda_a - banda_b)**2)
+
+--- cell 7 (code) ---
+def get_reporte_por_puzzle(puzzle, funcion_compatibilidad=compatibilidad_baseline, filtro_por_pieza = ):
+    
+    piezas = puzzle.piezas
+    diagnostico_de_ruido = detectar_tipo_ruido(piezas)
+    if diagnostico_de_ruido:
+        piezas_limpias = [filtrar_pieza(p, diagnostico_de_ruido) for p in piezas]
+        piezas = piezas_limpias
+
+    matrices_afinidad = construir_matrices_afinidad(piezas, funcion_compatibilidad)
+    grilla, rec = reconstruir_desde_afinidades(matrices_afinidad, puzzle.cantidad_filas, puzzle.cantidad_columnas, devolver_reconstructor=True)
+
+    
+
+    reporte_l1_limpio = generar_reporte_completo(puzzle_l1, matrices_afinidad=matrices_l1_limpias, grilla_propuesta=grilla_l1_limpia)
+
+--- cell 8 (markdown) ---
+---
+## 🧩 Nivel 1: Detección de Ruido y Filtrado Espacial Adaptativo
+
+### Desafío:
+Las piezas presentan degradaciones por ruido espacial desconocido a priori:
+- Ruido Gaussiano
+- Sal y Pimienta
+- Rayleigh
+- Uniforme
+
+Existen 7 variantes posibles generables por el sistema:
+- **A:** Gaussiano nivel 1 + sal y pimienta nivel 1
+- **B:** Sal y pimienta nivel 1 + uniforme nivel 1
+- **C:** Gaussiano nivel 2 + solo sal nivel 2
+- **D:** Rayleigh nivel 2 + solo pimienta nivel 2
+- **E:** Uniforme nivel 3 + sal y pimienta nivel 3
+- **F:** Gaussiano nivel 3 + impulsivo asimétrico (sal nivel 3, pimienta nivel 1)
+- **H:** Aleatoria — dos ruidos distintos sorteados en secuencia, cada uno con dificultad 2 o 3
+
+### Tarea:
+1. Implementar `detectar_tipo_ruido(piezas)` para diagnosticar qué ruidos están presentes en el rompecabezas.
+2. Implementar `filtrar_pieza_nivel1(pieza, diagnostico)` que adapte la estrategia de filtrado según el diagnóstico detectado, limpiando todas las piezas para su correcta reconstrucción.
+3. **Como último ejercicio del nivel**, la solución tiene que reconstruir correctamente **5 rompecabezas de la variante `H`** (ruidos y dificultad sorteados por semilla, no elegidos por ustedes).
+
+
+
+--- cell 9 (code) ---
+# 1. Cargar imagen base y generar caso de Nivel 1
+ruta_img = 'imagenes/base/paisaje.png'
+if not os.path.exists(ruta_img):
+    ruta_img = 'TP_ROMPECABEZAS_CURSO/imagenes/base/paisaje.png'
+
+img_base = cargar_imagen(ruta_img)
+
+# Pueden elegir la variante deseada: 'A', 'B', 'C', 'D', 'E', 'F' o 'H'
+VARIANTE_SELECCIONADA = 'A'
+
+puzzle_l1 = 
+
+print(f'Nivel 1 [Variante {VARIANTE_SELECCIONADA}]: {puzzle_l1.metadatos.get("nombre_ruido")}')
+mostrar_piezas_desordenadas(puzzle_l1, max_piezas=12, titulo=f'Nivel 1 - Variante {VARIANTE_SELECCIONADA}')
+
+
+
+--- cell 10 (code) ---
+# 2. Evaluación SIN Filtrar (Línea de base fallida)
+matrices_l1_sucias = construir_matrices_afinidad(puzzle_l1.piezas, funcion_compatibilidad=compatibilidad_baseline)
+grilla_l1_sucia = reconstruir_desde_afinidades(matrices_l1_sucias, puzzle_l1.cantidad_filas, puzzle_l1.cantidad_columnas)
+
+reporte_l1_sucio = generar_reporte_completo(puzzle_l1, matrices_afinidad=matrices_l1_sucias, grilla_propuesta=grilla_l1_sucia)
+imprimir_reporte(reporte_l1_sucio, titulo=f'Nivel 1 (Var {VARIANTE_SELECCIONADA}) - SIN FILTRAR')
+mostrar_reconstruccion(puzzle_l1, grilla_l1_sucia, titulo='Reconstrucción Fallida (Sin Filtrar)')
+
+
+
+--- cell 11 (code) ---
+# 3. [ZONA DE ALUMNOS] Detección de Ruido y Filtrado Espacial Adaptativo
+
+def detectar_tipo_ruido(piezas: list) -> dict:
+    """
+
+    Retorna un diccionario con el diagnóstico, por ejemplo:
+    {
+        'tiene_sal': bool,
+        'tiene_pimienta': bool,
+        'tiene_continuo': bool,
+        'tipo': str
+    }
+    """
+    ###COMPLETAR
+
+    return {'tiene_sal': True, 'tiene_pimienta': True, 'tiene_continuo': True, 'tipo': 'mixto'}
+
+
+def filtrar_pieza_nivel1(pieza: np.ndarray, diagnostico: dict = None) -> np.ndarray:
+    """
+    Limpia la pieza adaptando el filtro espacial según el diagnóstico detectado:
+    - Si tiene sal y/o pimienta: ...
+    - Si tiene ruido continuo: ...
+    Recibe y retorna la pieza en float64 [0.0, 1.0] RGB.
+    """
+    ###COMPLETAR
+
+    return pieza
+
+# Ejecutar detección sobre las piezas del rompecabezas
+diagnostico_l1 = detectar_tipo_ruido(puzzle_l1.piezas)
+print(f"Diagnóstico de ruido detectado: {diagnostico_l1}")
+
+# Comparación visual sobre una pieza
+p1_orig = puzzle_l1.piezas[0]
+p1_filt = filtrar_pieza_nivel1(p1_orig, diagnostico_l1)
+mostrar_comparacion_imagen(p1_orig, p1_filt, titulo_orig='Pieza 0 Sucia', titulo_proc='Pieza 0 Filtrada')
+
+
+
+--- cell 12 (code) ---
+# 4. Evaluación CON Filtrado de Piezas
+piezas_l1_limpias = [filtrar_pieza_nivel1(p, diagnostico_l1) for p in puzzle_l1.piezas]
+
+matrices_l1_limpias = construir_matrices_afinidad(piezas_l1_limpias, funcion_compatibilidad=compatibilidad_baseline)
+grilla_l1_limpia, rec_l1 = reconstruir_desde_afinidades(matrices_l1_limpias, puzzle_l1.cantidad_filas, puzzle_l1.cantidad_columnas, devolver_reconstructor=True)
+
+reporte_l1_limpio = generar_reporte_completo(puzzle_l1, matrices_afinidad=matrices_l1_limpias, grilla_propuesta=grilla_l1_limpia)
+imprimir_reporte(reporte_l1_limpio, titulo=f'Nivel 1 (Var {VARIANTE_SELECCIONADA}) - CON FILTRADO')
+mostrar_reconstruccion(puzzle_l1, grilla_l1_limpia, piezas=piezas_l1_limpias, titulo='Reconstrucción Exitosa Nivel 1')
+
+
+
+--- cell 13 (code) ---
+# 5. Generación de la Animación GIF del Armado (Nivel 1)
+ruta_gif_l1 = 'animacion_nivel1.gif'
+crear_animacion(puzzle_l1, rec_l1, piezas=piezas_l1_limpias, ruta_salida=ruta_gif_l1, escala=2, cuadros_por_segundo=8)
+
+from IPython.display import Image as IPImage, display
+if os.path.exists(ruta_gif_l1):
+    display(IPImage(filename=ruta_gif_l1))
+
+
+
+--- cell 14 (code) ---
+# 6. Evaluación Final: generalización a 5 variantes aleatorias (H)
+SEMILLAS_H = [111, 222, 333, 444, 555]
+resultados_h = []
+
+for semilla_h in SEMILLAS_H:
+    puzzle_h = crear_rompecabezas_nivel(img_base, nivel=1, variante='H', filas=8, columnas=8, semilla=semilla_h)
+
+    diagnostico_h = detectar_tipo_ruido(puzzle_h.piezas)
+    piezas_h_limpias = [filtrar_pieza_nivel1(p, diagnostico_h) for p in puzzle_h.piezas]
+
+    matrices_h = construir_matrices_afinidad(piezas_h_limpias, funcion_compatibilidad=compatibilidad_baseline)
+    grilla_h = reconstruir_desde_afinidades(matrices_h, puzzle_h.cantidad_filas, puzzle_h.cantidad_columnas)
+
+    reporte_h = generar_reporte_completo(puzzle_h, matrices_afinidad=matrices_h, grilla_propuesta=grilla_h)
+    resultados_h.append({
+        'semilla': semilla_h,
+        'top1': reporte_h['top1_promedio'],
+        'vecindad': reporte_h['precision_vecindad'],
+    })
+
+print(f"{'Semilla H':<10} | {'Top-1':>7} | {'Vecindad':>9} | Resultado")
+print('-' * 46)
+aprobadas = 0
+for r in resultados_h:
+    ok = r['vecindad'] >= 0.99
+    aprobadas += int(ok)
+    print(f"{r['semilla']:<10} | {r['top1']*100:>6.1f}% | {r['vecindad']*100:>8.1f}% | {'OK' if ok else 'FALLO'}")
+
+print(f"\n{aprobadas}/{len(SEMILLAS_H)} variantes H reconstruidas correctamente.")
+assert aprobadas == len(SEMILLAS_H), (
+    "El Nivel 1 no está aprobado: la solución tiene que reconstruir las 5 variantes H, "
+    "no solo la variante A de la demostración."
+)
+print('✅ Nivel 1 aprobado: la solución generaliza a ruido no visto.')
+
+
+
+--- cell 15 (markdown) ---
+---
+## 🎨 Nivel 2: Corrección de Color
+
+### Desafío:
+Cada pieza sufrió una transformación de color distinta. No hay ruido pero los valores RGB dejan de ser comparables entre piezas.
+
+### Tarea:
+Implementar `corregir_color_nivel2(pieza, variante)` que modifique como necesiten el color de la pieza segun la variante indicada. Las variantes son:
+
+- ***matiz***
+- ***valor***
+
+**Como último ejercicio del nivel**, la solución tiene que reconstruir correctamente **4 rompecabezas armados con imágenes distintas y semillas distintas**.
+
+
+
+--- cell 16 (code) ---
+# 1. Generar rompecabezas Nivel 2
+# Pueden elegir la variante deseada: 'matiz' o 'valor'
+VARIANTE_SELECCIONADA_L2 = 'matiz'
+
+puzzle_l2 = crear_rompecabezas_nivel(
+    img_base,
+    nivel=2,
+    variante_cromatica=VARIANTE_SELECCIONADA_L2,
+    filas=8,
+    columnas=8,
+    semilla=202
+)
+
+print(f'Nivel 2 [Variante {VARIANTE_SELECCIONADA_L2}]: {puzzle_l2.cantidad_piezas} piezas con degradación cromática.')
+mostrar_piezas_desordenadas(puzzle_l2, max_piezas=12, titulo=f'Nivel 2 - Variante {VARIANTE_SELECCIONADA_L2}')
+
+
+
+--- cell 17 (code) ---
+# 2. [ZONA DE ALUMNOS] Corrección de Color por Espacio (HSV)
+
+def corregir_color_nivel2(pieza: np.ndarray, variante: str) -> np.ndarray:
+    """
+    Recibe y retorna la pieza en float64 [0.0, 1.0] RGB.
+    """
+    ###COMPLETAR
+
+    return pieza
+
+# Comparar una pieza antes y después de corregir
+p2_orig = puzzle_l2.piezas[0]
+p2_norm = corregir_color_nivel2(p2_orig, VARIANTE_SELECCIONADA_L2)
+mostrar_comparacion_imagen(p2_orig, p2_norm, titulo_orig='Pieza Original (Color Alterado)', titulo_proc=f'Componente Corregida ({VARIANTE_SELECCIONADA_L2})')
+
+
+
+--- cell 18 (code) ---
+# 3. Evaluación y Reconstrucción Nivel 2
+piezas_l2_corregidas = [corregir_color_nivel2(p, VARIANTE_SELECCIONADA_L2) for p in puzzle_l2.piezas]
+
+matrices_l2 = construir_matrices_afinidad(piezas_l2_corregidas, funcion_compatibilidad=compatibilidad_baseline)
+grilla_l2, rec_l2 = reconstruir_desde_afinidades(matrices_l2, puzzle_l2.cantidad_filas, puzzle_l2.cantidad_columnas, devolver_reconstructor=True)
+
+reporte_l2 = generar_reporte_completo(puzzle_l2, matrices_afinidad=matrices_l2, grilla_propuesta=grilla_l2)
+imprimir_reporte(reporte_l2, titulo=f'Nivel 2 (Var {VARIANTE_SELECCIONADA_L2}) - Corrección de Color')
+# La grilla se calcula con la componente corregida, pero se muestra con las piezas
+# ORIGINALES: así se ve la foto reconstruida y no la componente aislada.
+mostrar_reconstruccion(puzzle_l2, grilla_l2, piezas=puzzle_l2.piezas, titulo='Reconstrucción Nivel 2')
+
+
+
+--- cell 19 (code) ---
+# 4. Generación de la Animación GIF del Armado (Nivel 2)
+ruta_gif_l2 = 'animacion_nivel2.gif'
+crear_animacion(puzzle_l2, rec_l2, piezas=puzzle_l2.piezas, ruta_salida=ruta_gif_l2, escala=2, cuadros_por_segundo=8)
+
+from IPython.display import Image as IPImage, display
+if os.path.exists(ruta_gif_l2):
+    display(IPImage(filename=ruta_gif_l2))
+
+
+
+--- cell 20 (code) ---
+# 5. Evaluación Final: 3 imágenes distintas con semillas distintas
+import glob
+
+DIR_IMAGENES_L2 = 'imagenes/nivel_2'
+if not os.path.exists(DIR_IMAGENES_L2):
+    DIR_IMAGENES_L2 = 'TP_ROMPECABEZAS_CURSO/imagenes/nivel_2'
+
+EXTENSIONES_VALIDAS = ('.png', '.jpg', '.jpeg', '.webp')
+rutas_l2_final = sorted(
+    p for p in glob.glob(os.path.join(DIR_IMAGENES_L2, '*'))
+    if os.path.splitext(p)[1].lower() in EXTENSIONES_VALIDAS
+)
+assert len(rutas_l2_final) >= 3, f"Se necesitan al menos 3 imágenes en '{DIR_IMAGENES_L2}', se encontraron {len(rutas_l2_final)}."
+rutas_l2_final = rutas_l2_final[:3]
+
+SEMILLAS_L2_FINAL = [2001, 2002, 2003]
+resultados_l2_final = []
+
+for ruta_img_l2, semilla_l2 in zip(rutas_l2_final, SEMILLAS_L2_FINAL):
+    img_l2_final = cargar_imagen(ruta_img_l2)
+    puzzle_l2_final = crear_rompecabezas_nivel(
+        img_l2_final,
+        nivel=2,
+        variante_cromatica=VARIANTE_SELECCIONADA_L2,
+        filas=8,
+        columnas=8,
+        semilla=semilla_l2,
+    )
+
+    piezas_l2_final_corr = [corregir_color_nivel2(p, VARIANTE_SELECCIONADA_L2) for p in puzzle_l2_final.piezas]
+    matrices_l2_final = construir_matrices_afinidad(piezas_l2_final_corr, funcion_compatibilidad=compatibilidad_baseline)
+    grilla_l2_final = reconstruir_desde_afinidades(matrices_l2_final, puzzle_l2_final.cantidad_filas, puzzle_l2_final.cantidad_columnas)
+
+    reporte_l2_final = generar_reporte_completo(puzzle_l2_final, matrices_afinidad=matrices_l2_final, grilla_propuesta=grilla_l2_final)
+    resultados_l2_final.append({
+        'imagen': os.path.basename(ruta_img_l2),
+        'semilla': semilla_l2,
+        'top1': reporte_l2_final['top1_promedio'],
+        'vecindad': reporte_l2_final['precision_vecindad'],
+    })
+
+print(f"{'Imagen':<24} | {'Semilla':<8} | {'Top-1':>7} | {'Vecindad':>9} | Resultado")
+print('-' * 70)
+aprobadas_l2 = 0
+for r in resultados_l2_final:
+    ok = r['vecindad'] >= 0.99
+    aprobadas_l2 += int(ok)
+    print(f"{r['imagen']:<24} | {r['semilla']:<8} | {r['top1']*100:>6.1f}% | {r['vecindad']*100:>8.1f}% | {'OK' if ok else 'FALLO'}")
+
+print(f"\n{aprobadas_l2}/{len(rutas_l2_final)} imágenes reconstruidas correctamente.")
+assert aprobadas_l2 == len(rutas_l2_final), (
+    "El Nivel 2 no está aprobado: la solución tiene que reconstruir las 4 imágenes."
+)
+print('✅ Nivel 2 aprobado: la solución generaliza a otras imágenes.')
+
+
+
+--- cell 21 (markdown) ---
+---
+## 🌊 Nivel 3: Filtrado en Frecuencia (Transformada 2D de Fourier)
+
+### Desafío:
+Cada pieza recibió su propia trama periódica (combinación de ondas sinusoidales sorteadas independientemente: ortogonales, en rejilla, diagonales, oblicuas, etc.), visible en el espectro 2D de Fourier como picos aislados y simétricos respecto del origen, mucho más intensos que el contenido de la imagen.
+
+### Tarea:
+Implementar `filtrar_frecuencia_fourier_nivel3(pieza)`:
+1. Ubicar los picos de la trama en el espectro 2D (excluyendo un radio chico alrededor del DC, que es contenido y no ruido).
+2. Diseñar un filtro de muesca (Notch) que anule esos picos y sus conjugados, con una transición suave.
+3. Aplicar el filtro en frecuencia y volver al dominio espacial.
+
+Como cada pieza tiene su propia trama, las frecuencias a anular no pueden ser fijas.
+
+
+
+--- cell 22 (code) ---
+# 1. Generar rompecabezas Nivel 3
+puzzle_l3 = crear_rompecabezas_nivel(img_base, nivel=3, filas=8, columnas=8, semilla=303)
+
+print('Nivel 3: Rompecabezas generado con ruido periódico sinusoidal.')
+mostrar_piezas_desordenadas(puzzle_l3, max_piezas=12, titulo='Nivel 3 - Ruido Periódico')
+
+# Observar el espectro 2D en frecuencia de la primera pieza
+mostrar_espectro_fourier(puzzle_l3.piezas[0], titulo='Espectro 2D de la Pieza 0 (Notar los picos de ruido)')
+
+
+
+--- cell 23 (code) ---
+# 2. [ZONA DE ALUMNOS] Filtro Notch en Frecuencia
+
+def filtrar_frecuencia_fourier_nivel3(pieza: np.ndarray) -> np.ndarray:
+    """
+    Recibe y retorna la pieza en float64 [0.0, 1.0] RGB.
+    """
+    ###COMPLETAR
+
+    return pieza
+
+# Comparación visual y de espectro
+p3_orig = puzzle_l3.piezas[0]
+p3_limpia = filtrar_frecuencia_fourier_nivel3(p3_orig)
+mostrar_comparacion_imagen(p3_orig, p3_limpia, titulo_orig='Pieza 0 Con Ruido', titulo_proc='Pieza 0 Filtrada Notch')
+mostrar_espectro_fourier(p3_limpia, titulo='Espectro 2D Post-Filtro Notch')
+
+
+
+--- cell 24 (code) ---
+# 3. Evaluación y Reconstrucción Nivel 3
+piezas_l3_filtradas = [filtrar_frecuencia_fourier_nivel3(p) for p in puzzle_l3.piezas]
+
+matrices_l3 = construir_matrices_afinidad(piezas_l3_filtradas, funcion_compatibilidad=compatibilidad_baseline)
+grilla_l3, rec_l3 = reconstruir_desde_afinidades(matrices_l3, puzzle_l3.cantidad_filas, puzzle_l3.cantidad_columnas, devolver_reconstructor=True)
+
+reporte_l3 = generar_reporte_completo(puzzle_l3, matrices_afinidad=matrices_l3, grilla_propuesta=grilla_l3)
+imprimir_reporte(reporte_l3, titulo='Nivel 3 - Filtrado en Frecuencia (Fourier)')
+mostrar_reconstruccion(puzzle_l3, grilla_l3, piezas=piezas_l3_filtradas, titulo='Reconstrucción Nivel 3')
+
+
+
+--- cell 25 (code) ---
+# 4. Generación de la Animación GIF del Armado (Nivel 3)
+ruta_gif_l3 = 'animacion_nivel3.gif'
+crear_animacion(puzzle_l3, rec_l3, piezas=piezas_l3_filtradas, ruta_salida=ruta_gif_l3, escala=2, cuadros_por_segundo=8)
+
+from IPython.display import Image as IPImage, display
+if os.path.exists(ruta_gif_l3):
+    display(IPImage(filename=ruta_gif_l3))
+
+
+
+--- cell 26 (markdown) ---
+---
+## 🧩 Nivel 4: Geometría de Encastres Curvos
+
+### Desafío:
+Las piezas dejan de ser cuadradas. Cada silueta está recortada sobre fondo negro:
+- Bordes exteriores del rompecabezas: **PLANOS**.
+- Bordes interiores con encastres: **SALIENTE** o **ENTRANTE**.
+- Un borde `SALIENTE` solo encastra con un borde `ENTRANTE` complementario.
+
+### Tareas:
+1. **Clasificar piezas:** En `esquinas` (2 planos), `lados` (1 plano) e `interiores` (0 planos).
+2. **Correlación de bordes:** Implementar `mi_correlacion_bordes(lado_a, lado_b)`.
+3. **Compatibilidad:** Implementar `mi_compatibilidad_bordes(pieza_a, pieza_b, relacion)` combinando forma y color.
+
+> 💡 **Funciones útiles disponibles:**
+> - `segmentar_borde_en_4(contorno, mascara)`: detecta esquinas y devuelve los 4 lados.
+> - `pasar_borde_a_1d(curva, lado)`: extrae la señal 1D del borde (`PLANO`, `SALIENTE`, `ENTRANTE`).
+
+
+
+--- cell 27 (code) ---
+# 1. Generar rompecabezas Nivel 4 (Jigsaw)
+puzzle_l4 = crear_rompecabezas_nivel(img_base, nivel=4, filas=8, columnas=8, semilla=404)
+
+print(f'Nivel 4: {puzzle_l4.cantidad_piezas} piezas con siluetas curvas y encastres.')
+mostrar_piezas_desordenadas(puzzle_l4, max_piezas=12, titulo='Nivel 4 - Piezas Jigsaw')
+
+
+
+--- cell 28 (code) ---
+# 2. [ZONA DE ALUMNOS] Tarea 4.1: Clasificación Topológica (Esquinas, Lados e Interior)
+
+from core.detector_forma import segmentar_borde_en_4
+"""
+segmentar_borde_en_4(contorno,mascara_binaria):
+
+Segmenta el contorno exterior de una pieza de rompecabezas en sus 4 lados
+orientados (NORTE, ESTE, SUR, OESTE) y clasifica su morfología y topología.
+-----------
+Parámetros:
+contour_pts : np.ndarray
+    Array de forma (N, 2) con las coordenadas (x, y) del contorno perimetral.
+binary_mask : np.ndarray, opcional
+    Máscara binaria uint8 (H, W) de la pieza (255 = pieza, 0 = fondo). Default: None.
+num_samples : int, opcional
+    Cantidad de puntos equi-espaciados para la señal 1D de cada lado. Default: 80.
+--------
+Retorna:
+dict con la estructura:
+    - 'NORTE', 'ESTE', 'SUR', 'OESTE' : cada uno otro dict
+        Información de cada lado con los campos:
+        * 'type' (str): 'PLANO', 'SALIENTE' (macho) o 'ENTRANTE' (hembra).
+        * 'profile' (np.ndarray float32, (num_samples,)): Perfil 1D de desviación perpendicular.
+        * 'norm' (float): Norma L2 de la curva de desviación.
+        * 'length' (float): Longitud en píxeles de la base del lado.
+        * 'max_dev' (float): Desviación máxima absoluta respecto a la recta base.
+        * 'mean_dev' (float): Desviación media con signo (>0 hacia afuera, <0 hacia adentro).
+"""
+
+def clasificar_piezas(piezas: list) -> dict:
+    """
+    Clasifica las piezas en 'esquinas', 'lados' e 'interiores' según sus bordes PLANOS.
+    Binaricen cada pieza, extraigan su contorno perimetral y usen `segmentar_borde_en_4(contorno, mascara)`.
+    """
+    grupos = {"esquinas": [], "lados": [], "interiores": []}
+
+    ###COMPLETAR
+
+    return grupos
+
+# Ejecutar y verificar clasificación
+grupos_topologia = clasificar_piezas(puzzle_l4.piezas)
+print(f"📊 Clasificación Topológica ({puzzle_l4.cantidad_piezas} piezas en grilla {puzzle_l4.cantidad_filas}x{puzzle_l4.cantidad_columnas}):")
+print(f"  - 🟩 Esquinas   (2 planos): {len(grupos_topologia['esquinas'])} piezas -> {grupos_topologia['esquinas']}")
+print(f"  - 🟦 Lados      (1 plano) : {len(grupos_topologia['lados'])} piezas -> {grupos_topologia['lados']}")
+print(f"  - 🟧 Interiores (0 planos): {len(grupos_topologia['interiores'])} piezas -> {grupos_topologia['interiores']}")
+
+
+
+--- cell 29 (code) ---
+# 3. [ZONA DE ALUMNOS] Tarea 4.2: Implementación de mi_correlacion_bordes y mi_compatibilidad_bordes
+
+from core.detector_forma import segmentar_borde_en_4
+
+def mi_correlacion_bordes(lado_a: dict, lado_b: dict) -> float:
+    """
+    Calcula el acople geométrico entre dos bordes enfrentados.
+    Retorna 0.0 si no encastran, o la correlación entre sus perfiles 1D.
+    """
+    ###COMPLETAR
+
+    return 0.0
+
+
+def mi_compatibilidad_bordes(pieza_a: np.ndarray, pieza_b: np.ndarray, relacion: str) -> float:
+    """
+    Evalúa la compatibilidad entre dos piezas combinando forma y color.
+    relacion: 'horizontal' (B a la derecha de A) o 'vertical' (B abajo de A).
+    """
+    ###COMPLETAR
+
+    return 0.0
+
+# Prueba rápida de costo
+c_test = mi_compatibilidad_bordes(puzzle_l4.piezas[0], puzzle_l4.piezas[1], 'horizontal')
+print(f'Costo entre pieza 0 y pieza 1: {c_test:.4f}')
+
+
+
+--- cell 30 (code) ---
+# 4. Evaluación y Reconstrucción Nivel 4
+matrices_l4 = construir_matrices_afinidad(puzzle_l4.piezas, funcion_compatibilidad=mi_compatibilidad_bordes)
+grilla_l4, rec_l4 = reconstruir_desde_afinidades(matrices_l4, puzzle_l4.cantidad_filas, puzzle_l4.cantidad_columnas, devolver_reconstructor=True)
+
+reporte_l4 = generar_reporte_completo(puzzle_l4, matrices_afinidad=matrices_l4, grilla_propuesta=grilla_l4)
+imprimir_reporte(reporte_l4, titulo='Nivel 4 - Rompecabezas Jigsaw')
+mostrar_reconstruccion(puzzle_l4, grilla_l4, titulo='Reconstrucción Nivel 4 (Jigsaw)')
+
+
+
+--- cell 31 (code) ---
+# 5. Generación de la Animación GIF del Armado (Nivel 4)
+ruta_gif_l4 = 'animacion_nivel4.gif'
+crear_animacion(puzzle_l4, rec_l4, ruta_salida=ruta_gif_l4, escala=2, cuadros_por_segundo=8)
+
+from IPython.display import Image as IPImage, display
+if os.path.exists(ruta_gif_l4):
+    display(IPImage(filename=ruta_gif_l4))
+
+
+
+--- cell 32 (markdown) ---
+---
+## 🔄 Nivel 5: Rotaciones, Encastres Geométricos y Enderezado Espectral
+
+### Desafío:
+Las piezas presentan **encastres geométricos curvos**, están **rotadas** con inclinación aleatoria y contienen una modulación periódica de rayas originalmente horizontales.
+
+### Tareas:
+1. Implementar `estimar_orientacion_fourier(pieza)`: encontrar el ángulo de giro de las rayas buscando el pico de frecuencia dominante (anulando el centro DC) y calculando su desvío trigonométrico.
+2. Implementar `enderezar_pieza_nivel5(pieza)` aplicando el ángulo de corrección con `enderezar_pieza`.
+3. Reconstruir el rompecabezas ensamblando las piezas enderezadas mediante la métrica geométrica `mi_compatibilidad_bordes`.
+
+--- cell 33 (code) ---
+# 1. Generar rompecabezas Nivel 5 (Jigsaw + Rotaciones + Rayas Horizontales)
+puzzle_l5 = crear_rompecabezas_nivel(img_base, nivel=5, filas=8, columnas=8, semilla=505, inclinacion_leve=True)
+
+print(f'Nivel 5: Rompecabezas generado con {puzzle_l5.cantidad_piezas} piezas rotadas con encastres.')
+mostrar_piezas_desordenadas(puzzle_l5, max_piezas=12, titulo='Nivel 5 - Piezas Jigsaw Rotadas con Modulación')
+
+
+
+--- cell 34 (code) ---
+# 2. [ZONA DE ALUMNOS] Detección de Orientación con Fourier 2D y Enderezado
+
+from core.analizador_rotacion import enderezar_pieza
+"""enderezar_pieza:
+    Rota la pieza para enderezarla alrededor de su centro geométrico.
+    Si padding > 0, expande el lienzo con ese margen sobre fondo negro puro (0, 0, 0).
+
+    Returns:
+        (pieza_enderezada, mascara_enderezada)
+"""
+
+def estimar_orientacion_fourier(pieza: np.ndarray, radio_dc: int = 15) -> float:
+    """
+    Estima el ángulo de inclinación de la pieza buscando el pico espectral de las rayas en la imagen.
+    """
+    ###COMPLETAR
+
+    return 0.0
+
+
+def enderezar_pieza_nivel5(pieza: np.ndarray) -> tuple[np.ndarray, float]:
+    """
+    Estima el ángulo de giro de las rayas y endereza la pieza a 0°.
+    Retorna la tupla (pieza_enderezada, angulo_estimado), tambien limpia la pieza.
+    """
+    ###COMPLETAR
+
+    return pieza, 0.0
+
+# Probar enderezado sobre la pieza 0
+p5_orig = puzzle_l5.piezas[0]
+p5_rect, ang_est = enderezar_pieza_nivel5(p5_orig)
+
+print(f'Ángulo detectado para la pieza 0: {ang_est:.2f}°')
+mostrar_comparacion_imagen(p5_orig, p5_rect, titulo_orig='Pieza 0 Inclinada', titulo_proc='Pieza 0 Enderezada (Deskewed)')
+
+
+
+--- cell 35 (code) ---
+# 3. Enderezar todas las piezas y Reconstruir
+piezas_l5_rectificadas = []
+angulos_detectados = []
+
+for idx, p in enumerate(puzzle_l5.piezas):
+    p_rect, ang = enderezar_pieza_nivel5(p)
+    piezas_l5_rectificadas.append(p_rect)
+    angulos_detectados.append(ang)
+
+# Resolver utilizando la métrica de compatibilidad geométrica de bordes
+matrices_l5 = construir_matrices_afinidad(piezas_l5_rectificadas, funcion_compatibilidad=mi_compatibilidad_bordes)
+grilla_l5, rec_l5 = reconstruir_desde_afinidades(matrices_l5, puzzle_l5.cantidad_filas, puzzle_l5.cantidad_columnas, devolver_reconstructor=True)
+
+reporte_l5 = generar_reporte_completo(puzzle_l5, matrices_afinidad=matrices_l5, grilla_propuesta=grilla_l5)
+imprimir_reporte(reporte_l5, titulo='Nivel 5 - Resultados con Deskewing y Jigsaw')
+mostrar_reconstruccion(puzzle_l5, grilla_l5, piezas=piezas_l5_rectificadas, titulo='Reconstrucción Nivel 5 (Enderezado + Jigsaw)')
+
+
+
+--- cell 36 (code) ---
+# 4. Generación de la Animación GIF del Armado (Nivel 5)
+ruta_gif = 'animacion_nivel5.gif'
+crear_animacion(puzzle_l5, rec_l5, piezas=piezas_l5_rectificadas, ruta_salida=ruta_gif, escala=2, cuadros_por_segundo=8)
+
+# Visualizar en notebook / colab si está disponible
+from IPython.display import Image as IPImage, display
+if os.path.exists(ruta_gif):
+    display(IPImage(filename=ruta_gif))
+
+
+
+--- cell 37 (markdown) ---
+---
+## 📝 Conclusiones y Entrega
+
+Para la entrega:
+
+Fechas de consultas del TP: 23/09/2026
+
+(Parcial y más consultas: 28/09/2026)
+
+Fecha de entrega: 30/09/2026 (y presentación oral)
+
+1. Ejecuten **Restart & Run All** para verificar que todo corra limpiamente.
+2. Entreguen el archivo `.ipynb` con sus explicaciones, código y gráficos generados.
+3. Escriban un informe de tres paginas recapitulando todos los metodos de recontrucción utilizados.
+4. Presentación oral del Trabajo Practico.
+

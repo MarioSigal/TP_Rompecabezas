@@ -164,7 +164,7 @@ class Rompecabezas:
         lienzo = np.zeros((h, w, canales), dtype=np.float64)
         grilla_arr = np.asarray(grilla_propuesta)
 
-        es_forma = (self.nivel in (4, 5)) or any(
+        es_forma = (self.nivel in (4, 5, 6)) or any(
             p.shape[0] > tile_h or p.shape[1] > tile_w for p in lista_piezas[:min(len(lista_piezas), 3)]
         )
 
@@ -655,96 +655,113 @@ def crear_rompecabezas_nivel(
     # NIVEL 6: Gran Desafío - Integración de Todos los Problemas (1, 2, 3, 4 y 5)
     # --------------------------------------------------------------------------
     elif nivel == 6:
-        # 1. Modulación de rayas periódicas para deskewing (Nivel 5)
-        periodo_rayas = kwargs.get("periodo_rayas", 8)
-        amplitud_rayas = kwargs.get("amplitud_rayas", 0.30)
-        img_mod = aplicar_filtro_rayas_horizontales(img_ajustada, periodo=periodo_rayas, amplitud=amplitud_rayas)
+
+        # SALT&PEPPER queda afuera a propósito: al ser ruido impulsivo de espectro
+        # ancho, contamina la estimación espectral que necesita el notch de Nivel 3.
+        RUIDOS_COMPATIBLES_CON_FOURRIER = {
+            "GAUSSIANO",
+            "RAYLEIGH",
+            "UNIFORME",
+        }
+
+        # Selección aleatoria de qué problemas opcionales (Nivel 2 y/o Nivel 3) integrar:
+        # puede resultar en [2], [3] o [2, 3].
+        problemas_opcionales = rng.choice([1, 2, 3], size=int(rng.integers(1, 3)), replace=False).tolist()
+
+        add_global_noise = (1 in problemas_opcionales)
+        add_color_degradation = (2 in problemas_opcionales)
+        add_fourrier_noise = (3 in problemas_opcionales)
+
+        degradacion_global = None
+        degradacion_por_pieza_secuencia = []
+
+        if add_global_noise:
+            # Si también se integra Fourier (Nivel 3), restringir el pool a ruidos
+            # compatibles con la estimación espectral del notch (ver comentario arriba).
+            if add_fourrier_noise:
+                pool_ruidos = sorted(RUIDOS_COMPATIBLES_CON_FOURRIER)
+            else:
+                pool_ruidos = list(ESCALAS_RUIDOS)
+
+            # Elejimos dos ruidos validos
+            tipos_ruido = rng.choice(pool_ruidos, size=2, replace=False)
+
+            # Creamos cada degradacion por separado y las componemos
+            funciones_ruido = []
+            for tipo in tipos_ruido:
+                nivel_ruido = int(rng.choice([2, 3]))
+                funciones_ruido.append(_ruido_por_escala(str(tipo), nivel_ruido))
+
+            degradacion_global = componer_degradaciones(*funciones_ruido)
+
+        if add_color_degradation:
+            # Verificamos que tipo de imagen es, si es matiz o variante cromatico
+            variante_cromatica = kwargs.get("variante_cromatica", "matiz")
+            degradador_l2 = DegradacionCromaticaPorPieza(variante=variante_cromatica)
+
+            degradacion_por_pieza_secuencia.append(degradador_l2)
+
+        if add_fourrier_noise:
+            degradador_l3 = TramaMixtaPorPieza()
+            degradacion_por_pieza_secuencia.append(degradador_l3)
+
+        degradacion_por_pieza = None
+        if degradacion_por_pieza_secuencia:
+            def degradacion_por_pieza(pieza, indice, generador):
+                resultado = pieza
+                for degradacion in degradacion_por_pieza_secuencia:
+                    resultado = degradacion(resultado, indice, generador)
+                return resultado
+
+        # Conseguimos la imagen degradada
+        img_degradada = img_ajustada.copy(),
+        if degradacion_global:
+            img_degradada = degradacion_global(img_degradada, rng)
+
 
         # 2. Geometría Jigsaw analítica (Nivel 4)
-        h, w = img_ajustada.shape[:2]
+        h, w = img_degradada.shape[:2]
         jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla)
 
         piezas_cortadas = []
         for r in range(filas):
             for c in range(columnas):
-                pieza_img, _, _ = jigsaw.extract_piece_image(img_mod, r, c, padding=kwargs.get("padding", 25))
+                pieza_img, _, _ = jigsaw.extract_piece_image(img_degradada, r, c, padding=kwargs.get("padding", 25))
                 piezas_cortadas.append(pieza_img)
 
-        # 3. Seleccionar variante de ruido espacial según semilla (Nivel 1)
-        variantes = ["A", "B", "C", "D", "E", "F"]
-        clave_variante = str(kwargs.get("variante", variantes[semilla % len(variantes)])).upper()
-        if clave_variante not in VARIANTES_NIVEL_1:
-            clave_variante = "A"
-        fn_ruido_l1 = VARIANTES_NIVEL_1[clave_variante]["fn"]
-
-        variante_cromatica = kwargs.get("variante_cromatica", "matiz")
-        degradador_l2 = DegradacionCromaticaPorPieza(variante=variante_cromatica)
-        degradador_l3 = TramaMixtaPorPieza()
-
         piezas_degradadas = []
-        angulos_reales = {}
-        permitir_inclinacion_leve = kwargs.get("inclinacion_leve", True)
 
-        for idx, p in enumerate(piezas_cortadas):
-            mask = (p.max(axis=2) > 0.01)
+        if degradacion_por_pieza:
+            for idx, p in enumerate(piezas_cortadas):
+                mask = (p.max(axis=2) > 0.01)
 
-            # 4.1 Degradación cromática por pieza (Nivel 2)
-            p_foto = degradador_l2(p, idx, rng)
-            p_foto[~mask] = 0.0
+                # 4.1 Degradación cromática por pieza (Nivel 2)
+                p_foto = degradacion_por_pieza(p, idx, rng)
+                p_foto[~mask] = 0.0
 
-            # 4.2 Trama periódica en frecuencia por pieza (Nivel 3)
-            p_trama = degradador_l3(p_foto, idx, rng)
-            p_trama[~mask] = 0.0
+                piezas_degradadas.append(p_rot)
+        else:
+            piezas_degradadas = piezas_cortadas
 
-            # 4.3 Ruido espacial mixto (Nivel 1)
-            p_ruidosa = fn_ruido_l1(p_trama, rng)
-            p_ruidosa[~mask] = 0.0
-
-            # 4.4 Rotación con inclinación aleatoria (Nivel 5)
-            if permitir_inclinacion_leve:
-                jitter = float(rng.uniform(-10.0, 10.0))
-                p_rot, _ = enderezar_pieza(p_ruidosa, angulo_grados=jitter, padding=0)
-            else:
-                jitter = 0.0
-                p_rot = p_ruidosa.copy()
-
-            piezas_degradadas.append(p_rot)
-            angulos_reales[idx] = jitter
-
-        # 5. Barajar piezas
-        total_piezas = len(piezas_degradadas)
-        permutacion = rng.permutation(total_piezas)
-        piezas_barajadas = [piezas_degradadas[i] for i in permutacion]
-
-        posicion_real = {}
-        rotacion_real = {}
-        for id_nuevo, id_orig in enumerate(permutacion):
-            posicion_real[id_nuevo] = (int(id_orig) // columnas, int(id_orig) % columnas)
-            rotacion_real[id_nuevo] = angulos_reales[int(id_orig)]
+        piezas_barajadas, posicion_real = barajar_piezas(piezas_degradadas, columnas, rng)
 
         return Rompecabezas(
             piezas=piezas_barajadas,
             cantidad_filas=filas,
             cantidad_columnas=columnas,
             posicion_real=posicion_real,
-            rotacion_real=rotacion_real,
             nivel=6,
             imagen_base=img_ajustada,
-            imagen_degradada=img_mod,
+            imagen_degradada=img_degradada.copy(),
             metadatos={
-                "semilla": semilla,
-                "filas": filas,
-                "columnas": columnas,
-                "nivel": 6,
-                "tipo": "multidegradado_integrador",
-                "variante_ruido_espacial": clave_variante,
-                "nombre_ruido_espacial": VARIANTES_NIVEL_1[clave_variante]["nombre"],
-                "variante_cromatica": variante_cromatica,
-                "periodo_rayas": periodo_rayas,
-                "inclinacion_leve": permitir_inclinacion_leve,
-            },
-        )
-
+                "semilla": semilla, 
+                "filas": filas, 
+                "columnas": columnas, 
+                "nivel": 6, 
+                "tipo": "random",
+                "tipo_ruido": "Aleatorio"
+                }
+            )
     else:
         raise ValueError(f"Nivel no válido: {nivel}. Debe ser un entero entre 1 y 6.")
 
