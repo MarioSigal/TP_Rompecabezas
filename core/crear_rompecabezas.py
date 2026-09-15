@@ -1,12 +1,5 @@
 """
-Módulo de Creación y Generación de Rompecabezas Paramétricos por Nivel (1 al 5).
 
-Representa el generador unificado oficial del curso:
-- Nivel 1: Piezas cuadradas + ruido espacial (Gaussiano, Sal y Pimienta, Rayleigh, Uniforme).
-- Nivel 2: Piezas cuadradas + degradación cromática por pieza (rotación de matiz o gamma/ganancia de valor).
-- Nivel 3: Piezas cuadradas + trama periódica en frecuencia por pieza (ondas/productos de ondas, pensada para notch).
-- Nivel 4: Piezas no cuadradas con encastres geométricos curvos (Jigsaw saliente/entrante/plano).
-- Nivel 5: Piezas rotadas + filtro de rayas periódicas horizontales para estimación de orientación.
 """
 
 from typing import Callable, Dict, List, Optional, Tuple, Any, Union
@@ -53,10 +46,6 @@ __all__ = [
 ]
 
 class Rompecabezas:
-    """
-    Clase que encapsula un rompecabezas generado:
-    piezas desordenadas (para los alumnos) y ground truth de auditoría (para evaluación).
-    """
 
     def __init__(
         self,
@@ -120,22 +109,19 @@ class Rompecabezas:
         grilla_propuesta: Optional[np.ndarray] = None,
         piezas: Optional[List[np.ndarray]] = None,
     ) -> np.ndarray:
-        """
-        Reconstruye una imagen pegando las piezas según la grilla especificada o la solución.
-        Elimina fondos negros e intercala automáticamente encastres tipo jigsaw.
-        """
+       
         if grilla_propuesta is None:
             grilla_propuesta = self.obtener_matriz_correcta()
 
         lista_piezas = piezas if piezas is not None else self.piezas
 
-        # En Nivel 5, asegurar que todas las piezas queden perfectamente orientadas a 0° al reconstruir
+        
         if self.nivel == 5:
             from core.analizador_rotacion import estimar_orientacion_fourier, enderezar_pieza
             periodo = self.metadatos.get("periodo_rayas", 8) if self.metadatos else 8
             piezas_orientadas = []
             for i, p in enumerate(lista_piezas):
-                # Si tenemos la rotación real exacta para la pieza i del puzzle, usarla para alineación perfecta a 0°:
+              
                 if self.rotacion_real and i in self.rotacion_real:
                     jitter = self.rotacion_real[i]
                     p_end, _ = enderezar_pieza(self.piezas[i], angulo_grados=-jitter, padding=0)
@@ -149,7 +135,6 @@ class Rompecabezas:
                         piezas_orientadas.append(p)
             lista_piezas = piezas_orientadas
 
-        # Dimensiones de la imagen base o deducidas de la grilla
         if self.imagen_base is not None:
             h, w = self.imagen_base.shape[:2]
             tile_h = h // self.cantidad_filas
@@ -216,14 +201,14 @@ class Rompecabezas:
                                 src_ch = patch_src[:, :, ch] if patch_src.ndim == 3 else patch_src
                                 lienzo[y0_dst:y1_dst, x0_dst:x1_dst, ch] = np.where(mask, src_ch, cur_ch)
 
-            # Rellenar cualquier micro-costura o píxel negro residual (< 20% de la imagen)
+            
             mascara_negra = np.all(lienzo < 0.005, axis=-1) if canales == 3 else (lienzo < 0.005)
             pct_negro = float(np.mean(mascara_negra))
             if 0 < pct_negro < 0.20:
                 mask_inpaint = mascara_negra.astype(np.uint8) * 255
                 lienzo_u8 = np.clip(lienzo * 255.0, 0, 255).astype(np.uint8)
                 inpa_u8 = cv2.inpaint(lienzo_u8, mask_inpaint, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
-                # Si aún queda algún pixel exactamente negro aislado en la máscara, segunda pasada
+                
                 mask_rem = ((np.all(inpa_u8 == 0, axis=-1) if canales == 3 else (inpa_u8 == 0)) & (mask_inpaint > 0)).astype(np.uint8) * 255
                 if np.any(mask_rem > 0):
                     inpa_u8 = cv2.inpaint(inpa_u8, mask_rem, inpaintRadius=7, flags=cv2.INPAINT_TELEA)
@@ -367,33 +352,26 @@ def armar_caso_rompecabezas(
     )
 
 
-# ==============================================================================
-# Variantes Oficiales de Ruido para Nivel 1
-# ==============================================================================
 
 ESCALAS_RUIDOS = {
-    #(probabilidad_sal, probabilidad_pimienta)
     "SALT_PEPPER" : {
         1: (0.050, 0.050),
         2: (0.115, 0.115),
         3: (0.228, 0.228),
     },
 
-    #(desviacion_estandar,)
     "GAUSSIANO" : {
         1: (0.05,),
         2: (0.10,),
         3: (0.30,),
     },
 
-    #(limite_inferior, limite_superior)
     "UNIFORME" : {
         1: (-0.05, 0.05),
         2: (-0.15, 0.15),
         3: (-0.35, 0.35),
     },
 
-    #(desplazamiento, parametro_b)
     "RAYLEIGH" : {
         1: (0.0, 0.010),
         2: (0.0, 0.15),
@@ -476,35 +454,11 @@ def crear_rompecabezas_nivel(
     semilla: int = 42,
     **kwargs,
 ) -> Rompecabezas:
-    """
-    Función principal para generar rompecabezas indicando el nivel (1 a 5).
 
-    Nivel 1:
-        Piezas cuadradas con ruidos espaciales, parametrizados por ESCALAS_RUIDOS (nivel 1: leve,
-        2: medio, 3: fuerte). Permite elegir 'variante' entre 'A', 'B', 'C', 'D', 'E', 'F', 'H':
-        - 'A': Gaussiano nivel 1 + sal y pimienta nivel 1
-        - 'B': Sal y pimienta nivel 1 + uniforme nivel 1
-        - 'C': Gaussiano nivel 2 + SOLO SAL nivel 2
-        - 'D': Rayleigh nivel 2 + SOLO PIMIENTA nivel 2
-        - 'E': Uniforme nivel 3 + sal y pimienta nivel 3
-        - 'F': Gaussiano nivel 3 + impulsivo asimétrico (sal nivel 3, pimienta nivel 1)
-        - 'H': Aleatoria, dos ruidos distintos en secuencia con dificultad 2 o 3 cada uno
-    Nivel 2:
-        Piezas cuadradas con variaciones fotométricas por pieza (Gamma, Saturación, Brillo).
-    Nivel 3:
-        Piezas cuadradas con interferencia armónica periódica en frecuencia (Fourier).
-    Nivel 4:
-        Piezas Jigsaw con encastres curvos complementarios (Saliente, Entrante, Plano).
-    Nivel 5:
-        Piezas rotadas (múltiplos de 90° e inclinación leve) con filtro de modulación horizontal.
-    """
     rng = np.random.default_rng(semilla)
     img_limpia = asegurar_rgb_float(imagen_base)
     img_ajustada = garantizar_dimensiones_para_divisibilidad(img_limpia, filas, columnas)
 
-    # --------------------------------------------------------------------------
-    # NIVEL 1: Ruido Espacial (6 Variantes Oficiales de la Cátedra)
-    # --------------------------------------------------------------------------
     if nivel == 1:
         clave_variante = str(kwargs.get("variante", "A")).upper()
         if clave_variante not in VARIANTES_NIVEL_1:
@@ -526,9 +480,7 @@ def crear_rompecabezas_nivel(
             },
         )
 
-    # --------------------------------------------------------------------------
-    # NIVEL 2: Degradación Cromática por Pieza (rotación de matiz o gamma/ganancia de valor)
-    # --------------------------------------------------------------------------
+
     elif nivel == 2:
         variante_cromatica = kwargs.get("variante_cromatica", "matiz")
         degradador_l2 = DegradacionCromaticaPorPieza(variante=variante_cromatica)
@@ -543,9 +495,6 @@ def crear_rompecabezas_nivel(
             metadatos_adicionales={"tipo_ruido": "cromatico_por_pieza", "variante_cromatica": variante_cromatica},
         )
 
-    # --------------------------------------------------------------------------
-    # NIVEL 3: Trama Periódica en Frecuencia por Pieza (pensada para notch)
-    # --------------------------------------------------------------------------
     elif nivel == 3:
         degradador_l3 = TramaMixtaPorPieza()
 
@@ -559,9 +508,6 @@ def crear_rompecabezas_nivel(
             metadatos_adicionales={"tipo_ruido": "trama_periodica_por_pieza"},
         )
 
-    # --------------------------------------------------------------------------
-    # NIVEL 4: Piezas no cuadradas con encastres (Jigsaw Saliente/Entrante)
-    # --------------------------------------------------------------------------
     elif nivel == 4:
         h, w = img_ajustada.shape[:2]
         jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla)
@@ -585,16 +531,13 @@ def crear_rompecabezas_nivel(
             metadatos={"semilla": semilla, "filas": filas, "columnas": columnas, "nivel": 4, "tipo": "jigsaw"},
         )
 
-    # --------------------------------------------------------------------------
-    # NIVEL 5: Rotaciones + Filtro Periódico Horizontal para Detección Espectral
-    # --------------------------------------------------------------------------
     elif nivel == 5:
-        # 1. Aplicar modulación de rayas periódicas horizontales sobre la imagen base
+        
         periodo_rayas = kwargs.get("periodo_rayas", 8)
         amplitud_rayas = kwargs.get("amplitud_rayas", 0.35)
         img_rayada = aplicar_filtro_rayas_horizontales(img_ajustada, periodo=periodo_rayas, amplitud=amplitud_rayas)
 
-        # 2. Extraer piezas con geometría Jigsaw (bordes con forma analítica)
+
         h, w = img_ajustada.shape[:2]
         jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla)
 
@@ -604,7 +547,7 @@ def crear_rompecabezas_nivel(
                 pieza_img, _, _ = jigsaw.extract_piece_image(img_rayada, r, c, padding=kwargs.get("padding", 30))
                 piezas_cortadas.append(pieza_img)
 
-        # 3. Rotar cada pieza con inclinación leve sobre fondo negro
+
         permitir_inclinacion_leve = kwargs.get("inclinacion_leve", True)
 
         piezas_rotadas = []
@@ -651,21 +594,17 @@ def crear_rompecabezas_nivel(
             },
         )
 
-    # --------------------------------------------------------------------------
-    # NIVEL 6: Gran Desafío - Integración de Todos los Problemas (1, 2, 3, 4 y 5)
-    # --------------------------------------------------------------------------
+  
     elif nivel == 6:
 
-        # SALT&PEPPER queda afuera a propósito: al ser ruido impulsivo de espectro
-        # ancho, contamina la estimación espectral que necesita el notch de Nivel 3.
+       
         RUIDOS_COMPATIBLES_CON_FOURRIER = {
             "GAUSSIANO",
             "RAYLEIGH",
             "UNIFORME",
         }
 
-        # Selección aleatoria de qué problemas opcionales (Nivel 2 y/o Nivel 3) integrar:
-        # puede resultar en [2], [3] o [2, 3].
+       
         problemas_opcionales = rng.choice([1, 2, 3], size=int(rng.integers(1, 3)), replace=False).tolist()
 
         add_global_noise = (1 in problemas_opcionales)
@@ -676,17 +615,16 @@ def crear_rompecabezas_nivel(
         degradacion_por_pieza_secuencia = []
 
         if add_global_noise:
-            # Si también se integra Fourier (Nivel 3), restringir el pool a ruidos
-            # compatibles con la estimación espectral del notch (ver comentario arriba).
+           
             if add_fourrier_noise:
                 pool_ruidos = sorted(RUIDOS_COMPATIBLES_CON_FOURRIER)
             else:
                 pool_ruidos = list(ESCALAS_RUIDOS)
 
-            # Elejimos dos ruidos validos
+           
             tipos_ruido = rng.choice(pool_ruidos, size=2, replace=False)
 
-            # Creamos cada degradacion por separado y las componemos
+            
             funciones_ruido = []
             for tipo in tipos_ruido:
                 nivel_ruido = int(rng.choice([2, 3]))
@@ -695,7 +633,7 @@ def crear_rompecabezas_nivel(
             degradacion_global = componer_degradaciones(*funciones_ruido)
 
         if add_color_degradation:
-            # Verificamos que tipo de imagen es, si es matiz o variante cromatico
+           
             variante_cromatica = kwargs.get("variante_cromatica", "matiz")
             degradador_l2 = DegradacionCromaticaPorPieza(variante=variante_cromatica)
 
@@ -713,13 +651,13 @@ def crear_rompecabezas_nivel(
                     resultado = degradacion(resultado, indice, generador)
                 return resultado
 
-        # Conseguimos la imagen degradada
+       
         img_degradada = img_ajustada.copy(),
         if degradacion_global:
             img_degradada = degradacion_global(img_degradada, rng)
 
 
-        # 2. Geometría Jigsaw analítica (Nivel 4)
+       
         h, w = img_degradada.shape[:2]
         jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla)
 
@@ -735,7 +673,7 @@ def crear_rompecabezas_nivel(
             for idx, p in enumerate(piezas_cortadas):
                 mask = (p.max(axis=2) > 0.01)
 
-                # 4.1 Degradación cromática por pieza (Nivel 2)
+               
                 p_foto = degradacion_por_pieza(p, idx, rng)
                 p_foto[~mask] = 0.0
 
