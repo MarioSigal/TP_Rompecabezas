@@ -2,8 +2,7 @@
 Módulo de Procesamiento en Frecuencia para Detección de Orientación y Deskewing (Nivel 5).
 Permite:
 1. Aplicar modulación de rayas periódicas horizontales.
-2. Estimar el ángulo de rotación mediante la Transformada 2D de Fourier (FFT) o gradientes Sobel.
-3. Enderezar (deskew) las piezas rotadas antes del ensamblado.
+2. Enderezar (deskew) las piezas rotadas antes del ensamblado.
 """
 
 from typing import Tuple, Optional
@@ -18,6 +17,7 @@ __all__ = [
     "rotar_imagen_ortogonal",
 ]
 
+_MSG_EJERCICIO = "Hola, chismosin (again), fijate el contrato."
 
 def aplicar_filtro_rayas_horizontales(
     imagen: np.ndarray,
@@ -54,46 +54,13 @@ def estimar_orientacion_fourier(
     radio_dc: Optional[int] = None,
 ) -> float:
     """
-    Estima el ángulo de inclinación mediante el pico espectral dominante en Fourier 2D.
-
-    Principios físicos:
-    1. Las rayas periódicas generan un pico armónico brillante simétrico respecto al centro DC.
-    2. Al rotar la pieza un ángulo theta, el pico se desplaza sobre una circunferencia de radio R = alto / periodo.
-    3. Anulando la componente continua (centro DC), el valor máximo de magnitud (np.argmax) identifica directamente la coordenada del pico.
-    4. El ángulo de rotación se obtiene mediante la relación trigonométrica con arctan2.
-    Retorna el ángulo en grados necesario para enderezar la pieza a 0°.
+    Contrato esperado:
+        Entrada: pieza rotada, con la modulación de rayas de
+                 `aplicar_filtro_rayas_horizontales` y período `periodo_esperado`.
+        Salida:  ángulo en grados que hay que pasarle a `enderezar_pieza` para
+                 llevar la pieza a 0°.
     """
-    if radio_dc is not None:
-        radio_exclusion_dc = radio_dc
-    if imagen.ndim == 3:
-        if issubclass(imagen.dtype.type, np.floating):
-            gray = cv2.cvtColor((np.clip(imagen, 0.0, 1.0) * 255.0).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32)
-        else:
-            gray = cv2.cvtColor(imagen, cv2.COLOR_RGB2GRAY).astype(np.float32)
-    else:
-        gray = imagen.astype(np.float32)
-
-    # 1. Transformada 2D de Fourier centrada
-    F = np.fft.fftshift(np.fft.fft2(gray))
-    magnitud = np.abs(F)
-
-    # 2. Anular la componente continua (DC)
-    cy, cx = magnitud.shape[0] // 2, magnitud.shape[1] // 2
-    r_dc = radio_exclusion_dc
-    magnitud[cy - r_dc : cy + r_dc + 1, cx - r_dc : cx + r_dc + 1] = 0.0
-
-    # 3. Encontrar el pico más intenso en la circunferencia
-    yp, xp = np.unravel_index(np.argmax(magnitud), magnitud.shape)
-    dy = yp - cy
-    dx = xp - cx
-
-    # Tomar semiplano superior por simetría conjugada de Fourier
-    if dy > 0:
-        dy, dx = -dy, -dx
-
-    # 4. Calcular el ángulo para enderezar (contrarrestar la inclinación)
-    angulo_correccion = float(-np.degrees(np.arctan2(dx, -dy)))
-    return angulo_correccion
+    raise NotImplementedError(_MSG_EJERCICIO)
 
 
 def estimar_orientacion_sobel(
@@ -102,53 +69,9 @@ def estimar_orientacion_sobel(
     num_bins: int = 180,
 ) -> float:
     """
-    Estima el ángulo de inclinación mediante el histograma ponderado de direcciones
-    de gradiente espacial Sobel.
+     Esto  no deberia funcar, si queres intentalo... padawan(?
     """
-    if imagen.ndim == 3:
-        if issubclass(imagen.dtype.type, np.floating):
-            gray = cv2.cvtColor((imagen * 255.0).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32)
-        else:
-            gray = cv2.cvtColor(imagen, cv2.COLOR_RGB2GRAY).astype(np.float32)
-    else:
-        gray = imagen.astype(np.float32)
-
-    if mascara is not None:
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-        eroded_mask = cv2.erode(mascara, kernel)
-    else:
-        eroded_mask = (gray > 5.0).astype(np.uint8) * 255
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-        eroded_mask = cv2.erode(eroded_mask, kernel)
-
-    gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
-    gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-
-    magnitud = np.sqrt(gx ** 2 + gy ** 2)
-    angulo_deg = -np.rad2deg(np.arctan2(gy, gx))
-    angulo_axial = np.mod(angulo_deg, 180.0)
-
-    validos = (eroded_mask > 0) & (magnitud > 10.0)
-    if not np.any(validos):
-        return 0.0
-
-    conteos, bordes_bin = np.histogram(
-        angulo_axial[validos],
-        bins=num_bins,
-        range=(0.0, 180.0),
-        weights=magnitud[validos],
-    )
-
-    pico = np.argmax(conteos)
-    angulo_normal = 0.5 * (bordes_bin[pico] + bordes_bin[pico + 1])
-    angulo_raya = angulo_normal - 90.0
-
-    if angulo_raya > 90.0:
-        angulo_raya -= 180.0
-    elif angulo_raya < -90.0:
-        angulo_raya += 180.0
-
-    return float(angulo_raya)
+    raise NotImplementedError(_MSG_EJERCICIO)
 
 
 def enderezar_pieza(
