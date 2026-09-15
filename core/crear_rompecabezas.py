@@ -414,34 +414,40 @@ def _ruido_impulsivo(nivel_sal: Optional[int] = None, nivel_pimienta: Optional[i
 VARIANTES_NIVEL_1 = {
     "A": {
         "nombre": "Gaussiano nivel 1 + sal y pimienta nivel 1",
-        "fn": componer_degradaciones(_ruido_impulsivo(1, 1), _ruido_por_escala("GAUSSIANO", 1)),
+        "fn": componer_degradaciones(_ruido_por_escala("GAUSSIANO", 1), _ruido_impulsivo(1, 1)),
     },
     "B": {
-        "nombre": "Sal y pimienta nivel 1 + uniforme nivel 1",
-        "fn": componer_degradaciones(_ruido_impulsivo(1, 1), _ruido_por_escala("UNIFORME", 1)),
+        "nombre": "Uniforme nivel 1 + sal y pimienta nivel 1",
+        "fn": componer_degradaciones(_ruido_por_escala("UNIFORME", 1), _ruido_impulsivo(1, 1)),
     },
     "C": {
         "nombre": "Gaussiano nivel 2 + SOLO SAL nivel 2",
-        "fn": componer_degradaciones(_ruido_impulsivo(nivel_sal=2), _ruido_por_escala("GAUSSIANO", 2)),
+        "fn": componer_degradaciones(_ruido_por_escala("GAUSSIANO", 2), _ruido_impulsivo(nivel_sal=2)),
     },
     "D": {
         "nombre": "Rayleigh nivel 2 + SOLO PIMIENTA nivel 2",
-        "fn": componer_degradaciones(_ruido_impulsivo(nivel_pimienta=2), _ruido_por_escala("RAYLEIGH", 2)),
+        "fn": componer_degradaciones(_ruido_por_escala("RAYLEIGH", 2), _ruido_impulsivo(nivel_pimienta=2)),
     },
     "E": {
         "nombre": "Uniforme nivel 3 + sal y pimienta nivel 3",
-        "fn": componer_degradaciones(_ruido_impulsivo(3, 3), _ruido_por_escala("UNIFORME", 3)),
+        "fn": componer_degradaciones(_ruido_por_escala("UNIFORME", 3), _ruido_impulsivo(3, 3)),
     },
     "F": {
         "nombre": "Gaussiano nivel 3 + impulsivo asimétrico (sal nivel 3, pimienta nivel 1)",
-        "fn": componer_degradaciones(_ruido_impulsivo(nivel_sal=3, nivel_pimienta=1), _ruido_por_escala("GAUSSIANO", 3)),
+        "fn": componer_degradaciones(_ruido_por_escala("GAUSSIANO", 3), _ruido_impulsivo(nivel_sal=3, nivel_pimienta=1)),
     },
     "H": {
         "nombre": "Aleatoria: dos ruidos distintos en secuencia, cada uno con dificultad (2 o 3) sorteada por semilla",
-        "fn": lambda img, gen: componer_degradaciones(*(
-            _ruido_por_escala(str(tipo), int(gen.choice([2, 3])))
-            for tipo in gen.choice(list(ESCALAS_RUIDOS), size=2, replace=False)
-        ))(img, gen),
+        "fn": lambda img, gen: componer_degradaciones(*[
+            _ruido_por_escala(tipo, nivel_dificultad)
+            for tipo, nivel_dificultad in sorted(
+                [
+                    (str(tipo), int(gen.choice([2, 3])))
+                    for tipo in gen.choice(list(ESCALAS_RUIDOS), size=2, replace=False)
+                ],
+                key=lambda par: par[0] == "SALT_PEPPER",
+            )
+        ])(img, gen),
     },
 }
 
