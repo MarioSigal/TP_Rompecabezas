@@ -26,6 +26,8 @@ __all__ = [
     "compatibilidad_forma",
 ]
 
+_MSG_EJERCICIO = "Hola chismosin, fijate el contrato de la funcion guinio"
+
 
 def binarize_piece(img: np.ndarray, fixed_threshold: float = 0.01) -> np.ndarray:
     """
@@ -239,49 +241,24 @@ def analyze_piece_shape(img: np.ndarray) -> Dict[str, Any]:
 
 def compute_edge_correlation(side_a: Dict[str, Any], side_b: Dict[str, Any]) -> float:
     """
-    Calcula el producto interno normalizado entre dos curvas de borde.
-    Devuelve 1.0 para match complementario perfecto (Saliente con Entrante idéntico), 0.0 para incompatibles.
+ 
+    Contrato esperado:
+        Entrada: dos diccionarios de lado, tal como los devuelve `segmentar_borde_en_4`
+        Salida:  float en [0.0, 1.0]. 1.0 = encastre complementario perfecto,
+                 0.0 = incompatibles.
     """
-    type_a = side_a["type"]
-    type_b = side_b["type"]
-
-    if type_a == "PLANO" or type_b == "PLANO":
-        return 0.0
-
-    # Compatibilidad física: un borde saliente solo encastra con un borde entrante complementario
-    is_sal_a = type_a in ("SALIENTE", "MACHO", "PESTAÑA")
-    is_ent_a = type_a in ("ENTRANTE", "HEMBRA", "HENDIDURA", "MUESCA")
-    is_sal_b = type_b in ("SALIENTE", "MACHO", "PESTAÑA")
-    is_ent_b = type_b in ("ENTRANTE", "HEMBRA", "HENDIDURA", "MUESCA")
-
-    if not ((is_sal_a and is_ent_b) or (is_ent_a and is_sal_b)):
-        return 0.0
-
-    prof_a = side_a["profile"]
-    prof_b = side_b["profile"]
-    prof_b_comp = -prof_b
-
-    norm_a = side_a.get("norm", float(np.linalg.norm(prof_a)))
-    norm_b = side_b.get("norm", float(np.linalg.norm(prof_b)))
-
-    if norm_a < 1e-4 or norm_b < 1e-4:
-        return 0.0
-
-    dot = float(np.dot(prof_a, prof_b_comp))
-    rho = dot / (norm_a * norm_b)
-    if rho <= 0.0:
-        return 0.0
-
-    amp_ratio = min(norm_a, norm_b) / max(norm_a, norm_b)
-    return float(max(0.0, min(1.0, rho * amp_ratio)))
+    raise NotImplementedError(_MSG_EJERCICIO)
 
 
 def compute_jigsaw_shape_compatibility(side_a: Dict[str, Any], side_b: Dict[str, Any]) -> float:
-    """Calcula el costo morfológico de encastre (0.0 óptimo, 1e5 incompatible)."""
-    corr = compute_edge_correlation(side_a, side_b)
-    if corr <= 1e-3:
-        return 1e5
-    return float((1.0 - corr) * 10.0)
+    """
+     costo morfológico de encastre entre dos lados.
+ 
+    Contrato esperado:
+        Salida: float, donde 0.0 es el encastre óptimo y un valor muy grande
+                (p. ej. 1e5) marca un par incompatible.
+    """
+    raise NotImplementedError(_MSG_EJERCICIO)
 
 
 # Caché para no recalcular la forma de la misma pieza repetidamente
@@ -306,21 +283,15 @@ def compatibilidad_forma(
     relacion: str = "horizontal",
 ) -> float:
     """
-    Función de compatibilidad de forma geométrica directa para dos piezas.
-    - relacion='horizontal': B a la derecha de A (A.ESTE con B.OESTE).
-    - relacion='vertical': B abajo de A (A.SUR con B.NORTE).
+     compatibilidad de forma entre dos piezas enteras.
+ 
+    Contrato esperado:
+        relacion='horizontal': B va a la derecha de A.
+        relacion='vertical':   B va abajo de A.
+        Salida: float, menor = mejor encastre.
+ 
+    Sugerencia: Si llageste hasta aca, te reomiendo `_get_cached_shape` para evitar recalcular la silueta de la misma pieza
+    en cada comparación
     """
-    shape_a = _get_cached_shape(pieza_a, id(pieza_a))
-    shape_b = _get_cached_shape(pieza_b, id(pieza_b))
-
-    if relacion == "horizontal":
-        side_a = shape_a["sides"]["ESTE"]
-        side_b = shape_b["sides"]["OESTE"]
-    elif relacion == "vertical":
-        side_a = shape_a["sides"]["SUR"]
-        side_b = shape_b["sides"]["NORTE"]
-    else:
-        raise ValueError(f"Relación desconocida: {relacion}")
-
-    return compute_jigsaw_shape_compatibility(side_a, side_b)
+    raise NotImplementedError(_MSG_EJERCICIO)
 
