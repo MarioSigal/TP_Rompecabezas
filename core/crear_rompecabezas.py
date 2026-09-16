@@ -457,7 +457,7 @@ VARIANTES_NIVEL_1 = {
                     (str(tipo), int(gen.choice([2, 3])))
                     for tipo in gen.choice(list(ESCALAS_RUIDOS), size=2, replace=False)
                 ],
-                key=lambda par: par[0] == "SALT_PEPPER",
+                key=lambda par: 1 if par[0] == "SALT_PEPPER" else 0,
             )
         ])(img, gen),
     },
@@ -661,7 +661,11 @@ def crear_rompecabezas_nivel(
             else:
                 pool_ruidos = list(ESCALAS_RUIDOS)
 
-            tipos_ruido = rng.choice(pool_ruidos, size=2, replace=False)
+            tipos_ruido = rng.choice(pool_ruidos, size=2, replace=False).tolist()
+            # Orden obligatorio: ruido continuo primero, sal y pimienta al final
+            # para que los píxeles impulsivos (0.0 y 1.0) no sean contaminados por el ruido continuo.
+            tipos_ruido.sort(key=lambda t: 1 if t == "SALT_PEPPER" else 0)
+
             funciones_ruido = []
             for tipo in tipos_ruido:
                 nivel_ruido = int(rng.choice([2, 3]))
@@ -755,6 +759,7 @@ def crear_rompecabezas_nivel(
                 "tipo_ruido": "Aleatorio",
                 "problemas_activos": sorteados,
                 "tiene_ruido_global": add_global_noise,
+                "tipos_ruido_global": tipos_ruido if add_global_noise else [],
                 "tiene_color": add_color_degradation,
                 "tiene_fourier": add_fourrier_noise,
                 "tiene_rotacion": add_rotation,
