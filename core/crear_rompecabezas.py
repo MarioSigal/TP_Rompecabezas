@@ -789,17 +789,18 @@ def _buscar_directorio_imagenes_base() -> Path:
     return Path("imagenes/base")
 
 
-def crear_dataset_desafio_30(
-    directorio_imagenes: Optional[Union[str, Path]] = None,
-    directorio_salida: Optional[Union[str, Path]] = None,
+def generar_caso_desafio_30(
+    indice_caso: int,
+    semilla: int = 42,
     filas: int = 4,
     columnas: int = 4,
-    semilla_base: int = 1000,
-    cantidad_casos: int = 30,
-) -> List[Rompecabezas]:
+    directorio_imagenes: Optional[Union[str, Path]] = None,
+    total_casos: int = 30,
+) -> Rompecabezas:
     """
-    Crea y configura el dataset de 30 rompecabezas integradores a partir de
-    las imágenes de la base, asignando semillas y problemas únicos a cada caso.
+    Construye y retorna un único rompecabezas (caso `indice_caso` de 0 a `total_casos - 1`)
+    del Desafío Integrador Nivel 6. Permite procesar los rompecabezas caso por caso
+    sin saturar la memoria RAM.
     """
     if directorio_imagenes is None:
         dir_img = _buscar_directorio_imagenes_base()
@@ -814,28 +815,77 @@ def crear_dataset_desafio_30(
     if not archivos:
         raise FileNotFoundError(f"No se encontraron imágenes en el directorio '{dir_img}'.")
 
+    archivo_elegido = archivos[indice_caso % len(archivos)]
+    img_raw = asegurar_rgb_float(cv2.imread(str(archivo_elegido))[:, :, ::-1].astype(np.float64) / 255.0)
+
+    semilla_caso = semilla + indice_caso
+    caso = crear_rompecabezas_nivel(
+        imagen_base=img_raw,
+        nivel=6,
+        filas=filas,
+        columnas=columnas,
+        semilla=semilla_caso,
+    )
+    caso.metadatos["archivo_origen"] = archivo_elegido.name
+    caso.metadatos["id_caso"] = indice_caso + 1
+    return caso
+
+
+def iterar_desafio_30(
+    semilla: int = 42,
+    filas: int = 4,
+    columnas: int = 4,
+    cantidad_casos: int = 30,
+    directorio_imagenes: Optional[Union[str, Path]] = None,
+):
+    """
+    Generador que produce uno a uno los rompecabezas del Desafío Integrador Nivel 6.
+    Yields:
+        (indice: int, total: int, puzzle: Rompecabezas)
+    """
+    for i in range(cantidad_casos):
+        puzzle = generar_caso_desafio_30(
+            indice_caso=i,
+            semilla=semilla,
+            filas=filas,
+            columnas=columnas,
+            directorio_imagenes=directorio_imagenes,
+            total_casos=cantidad_casos,
+        )
+        yield i, cantidad_casos, puzzle
+
+
+def crear_dataset_desafio_30(
+    directorio_imagenes: Optional[Union[str, Path]] = None,
+    directorio_salida: Optional[Union[str, Path]] = None,
+    filas: int = 4,
+    columnas: int = 4,
+    semilla_base: int = 1000,
+    cantidad_casos: int = 30,
+) -> List[Rompecabezas]:
+    """
+    Crea y retorna la lista de rompecabezas integradores.
+    Nota: Para grillas grandes (ej. 15x15), se recomienda utilizar `generar_caso_desafio_30`
+    o `iterar_desafio_30` para no saturar la memoria RAM.
+    """
     casos_dataset = []
     print(f"[Dataset] Generando {cantidad_casos} rompecabezas de {filas}x{columnas} ({filas * columnas} piezas c/u)...")
 
     for i in range(cantidad_casos):
-        archivo_elegido = archivos[i % len(archivos)]
-        img_raw = asegurar_rgb_float(cv2.imread(str(archivo_elegido))[:, :, ::-1].astype(np.float64) / 255.0)
-
-        semilla_caso = semilla_base + i
-        caso = crear_rompecabezas_nivel(
-            imagen_base=img_raw,
-            nivel=6,
+        caso = generar_caso_desafio_30(
+            indice_caso=i,
+            semilla=semilla_base,
             filas=filas,
             columnas=columnas,
-            semilla=semilla_caso,
+            directorio_imagenes=directorio_imagenes,
+            total_casos=cantidad_casos,
         )
-        caso.metadatos["archivo_origen"] = archivo_elegido.name
-        caso.metadatos["id_caso"] = i + 1
         casos_dataset.append(caso)
 
         if (i + 1) % 5 == 0 or (i + 1) == cantidad_casos:
             tipo_ruido_info = caso.metadatos.get('variante_ruido_espacial', caso.metadatos.get('tipo_ruido', 'N/A'))
-            print(f"  -> Caso {i + 1:2d}/{cantidad_casos}: [{archivo_elegido.name}] - Var Ruido: {tipo_ruido_info} (Semilla {semilla_caso})")
+            nombre = caso.metadatos.get('archivo_origen', 'N/A')
+            print(f"  -> Caso {i + 1:2d}/{cantidad_casos}: [{nombre}] - Var Ruido: {tipo_ruido_info} (Semilla {caso.metadatos['semilla']})")
 
     return casos_dataset
 
@@ -845,16 +895,16 @@ def generar_desafio_30(
     filas: int = 4,
     columnas: int = 4,
     directorio_imagenes: Optional[Union[str, Path]] = None,
+    cantidad_casos: int = 30,
 ) -> List[Rompecabezas]:
     """
-    Función del Core que construye los 30 rompecabezas del Desafío Integrador Nivel 6
-    a partir de una única semilla de grupo y las imágenes de la base.
+    Función que construye los 30 rompecabezas del Desafío Integrador Nivel 6.
     """
     return crear_dataset_desafio_30(
         directorio_imagenes=directorio_imagenes,
         filas=filas,
         columnas=columnas,
         semilla_base=semilla,
-        cantidad_casos=30,
+        cantidad_casos=cantidad_casos,
     )
 
