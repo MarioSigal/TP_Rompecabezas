@@ -83,6 +83,7 @@ from .crear_rompecabezas import (
     armar_caso_rompecabezas,
     crear_rompecabezas_nivel,
     crear_dataset_desafio_30,
+    generar_desafio_30,
 )
 
 __all__ = [
@@ -109,5 +110,5 @@ __all__ = [
     # Reconstructor
     "CELDA_VACIA", "ReconstructorRompecabezas", "reconstruir_desde_afinidades", "reconstruir_rompecabezas",
     # Generador
-    "Rompecabezas", "cortar_imagen_en_piezas", "barajar_piezas", "pegar_piezas", "armar_caso_rompecabezas", "crear_rompecabezas_nivel", "crear_dataset_desafio_30",
+    "Rompecabezas", "cortar_imagen_en_piezas", "barajar_piezas", "pegar_piezas", "armar_caso_rompecabezas", "crear_rompecabezas_nivel", "crear_dataset_desafio_30", "generar_desafio_30",
 ]

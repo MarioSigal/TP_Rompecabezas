@@ -766,19 +766,41 @@ def crear_rompecabezas_nivel(
         raise ValueError(f"Nivel no válido: {nivel}. Debe ser un entero entre 1 y 6.")
 
 
+def _buscar_directorio_imagenes_base() -> Path:
+    """Busca y retorna el directorio con las imágenes base de rompecabezas."""
+    candidatas = [
+        Path("imagenes/base"),
+        Path("TP_FINAL_ALUMNOS/imagenes/base"),
+        Path("repo_tp/imagenes/base"),
+        Path(__file__).resolve().parent.parent / "imagenes" / "base",
+    ]
+    for c in candidatas:
+        if c.exists() and any(c.glob("*.png")):
+            return c
+    for root in [Path.cwd(), Path(__file__).resolve().parent.parent]:
+        for p in root.rglob("imagenes/base"):
+            if p.is_dir() and any(p.glob("*.png")):
+                return p
+    return Path("imagenes/base")
+
+
 def crear_dataset_desafio_30(
-    directorio_imagenes: Union[str, Path],
+    directorio_imagenes: Optional[Union[str, Path]] = None,
     directorio_salida: Optional[Union[str, Path]] = None,
-    filas: int = 10,
-    columnas: int = 10,
+    filas: int = 4,
+    columnas: int = 4,
     semilla_base: int = 1000,
     cantidad_casos: int = 30,
 ) -> List[Rompecabezas]:
     """
-    Crea y configura el dataset de 30 rompecabezas integradores de 10x10 a partir de
-    las imágenes de la carpeta especificada, asignando semillas y problemas únicos a cada caso.
+    Crea y configura el dataset de 30 rompecabezas integradores a partir de
+    las imágenes de la base, asignando semillas y problemas únicos a cada caso.
     """
-    dir_img = Path(directorio_imagenes)
+    if directorio_imagenes is None:
+        dir_img = _buscar_directorio_imagenes_base()
+    else:
+        dir_img = Path(directorio_imagenes)
+
     extensiones = ["*.png", "*.jpg", "*.jpeg", "*.bmp", "*.webp"]
     archivos = []
     for ext in extensiones:
@@ -811,3 +833,23 @@ def crear_dataset_desafio_30(
             print(f"  -> Caso {i + 1:2d}/{cantidad_casos}: [{archivo_elegido.name}] - Var Ruido: {tipo_ruido_info} (Semilla {semilla_caso})")
 
     return casos_dataset
+
+
+def generar_desafio_30(
+    semilla: int = 42,
+    filas: int = 4,
+    columnas: int = 4,
+    directorio_imagenes: Optional[Union[str, Path]] = None,
+) -> List[Rompecabezas]:
+    """
+    Función del Core que construye los 30 rompecabezas del Desafío Integrador Nivel 6
+    a partir de una única semilla de grupo y las imágenes de la base.
+    """
+    return crear_dataset_desafio_30(
+        directorio_imagenes=directorio_imagenes,
+        filas=filas,
+        columnas=columnas,
+        semilla_base=semilla,
+        cantidad_casos=30,
+    )
+
