@@ -23,7 +23,9 @@ __all__ = [
     "analyze_piece_shape",
     "compute_edge_correlation",
     "compute_jigsaw_shape_compatibility",
+    "calcular_mse_color_bordes",
     "compatibilidad_forma",
+    "compatibilidad_borde_con_color",
 ]
 
 _MSG_EJERCICIO = "Hola chismosin, fijate el contrato de la funcion guinio"
@@ -159,15 +161,83 @@ def pasar_borde_a_1d(
 extraer_perfil_1d = pasar_borde_a_1d
 
 
+def _muestrear_color_curva(
+    curva: np.ndarray,
+    imagen_rgb: np.ndarray,
+    binary_mask: Optional[np.ndarray] = None,
+    num_samples: int = 80,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Interpola `num_samples` coordenadas a lo largo de `curva` y extrae el color RGB
+    de `imagen_rgb`, garantizando que no se tomen píxeles negros del fondo.
+    Retorna (puntos_interpolados, color_profile).
+    """
+    t_orig = np.linspace(0, 1, len(curva))
+    t_target = np.linspace(0, 1, num_samples)
+    x_pts = np.interp(t_target, t_orig, curva[:, 0])
+    y_pts = np.interp(t_target, t_orig, curva[:, 1])
+
+    h, w = imagen_rgb.shape[:2]
+    pts_interp = np.column_stack([x_pts, y_pts]).astype(np.float32)
+
+    colores = []
+    for x, y in zip(x_pts, y_pts):
+        xi = int(np.clip(round(x), 0, w - 1))
+        yi = int(np.clip(round(y), 0, h - 1))
+
+        # Si el píxel cae justo en el fondo negro por redondeo, buscar en vecindad 3x3
+        if binary_mask is not None and binary_mask[yi, xi] == 0:
+            found = False
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    ny, nx = yi + dy, xi + dx
+                    if 0 <= ny < h and 0 <= nx < w and binary_mask[ny, nx] > 0:
+                        yi, xi = ny, nx
+                        found = True
+                        break
+                if found:
+                    break
+
+        colores.append(imagen_rgb[yi, xi])
+
+    color_arr = np.asarray(colores, dtype=np.float32)
+    return pts_interp, color_arr
+
+
+_SIDE_CACHE = {}
+
+
 def detect_corners_and_split_sides(
     contour_pts: np.ndarray,
     binary_mask: Optional[np.ndarray] = None,
     num_samples: int = 80,
+    imagen_rgb: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     """
-    Segmenta el contorno en los 4 lados orientados (NORTE, ESTE, SUR, OESTE)
-    y calcula la señal 1D de desviación perpendicular.
+    Segmenta el contorno en los 4 lados orientados (NORTE, ESTE, SUR, OESTE),
+    calcula la señal 1D de desviación perpendicular y extrae los perfiles de color RGB
+    a lo largo de cada costura (evitando el fondo negro).
     """
+    global _SIDE_CACHE
+    es_img_directa = isinstance(contour_pts, np.ndarray) and contour_pts.ndim == 3
+    if es_img_directa:
+        clave_cache = (id(contour_pts), num_samples)
+        if clave_cache in _SIDE_CACHE:
+            return _SIDE_CACHE[clave_cache]
+        if len(_SIDE_CACHE) > 2000:
+            _SIDE_CACHE.clear()
+
+        if imagen_rgb is None:
+            imagen_rgb = contour_pts
+        if binary_mask is None:
+            binary_mask = binarize_piece(contour_pts)
+        contour_pts = extract_external_contour(binary_mask)
+
+    # Si binary_mask recibida es en realidad la imagen de color
+    if imagen_rgb is None and binary_mask is not None and binary_mask.ndim == 3:
+        imagen_rgb = binary_mask
+        binary_mask = binarize_piece(binary_mask)
+
     c_tl, c_tr, c_br, c_bl = detect_jigsaw_corners(contour_pts)
 
     def get_idx(pt):
@@ -203,12 +273,34 @@ def detect_corners_and_split_sides(
     info_s = pasar_borde_a_1d(curve_s, "SUR", num_muestras=num_samples)
     info_w = pasar_borde_a_1d(curve_w, "OESTE", num_muestras=num_samples)
 
+    if imagen_rgb is not None:
+        pts_n, col_n = _muestrear_color_curva(curve_n, imagen_rgb, binary_mask, num_samples)
+        pts_e, col_e = _muestrear_color_curva(curve_e, imagen_rgb, binary_mask, num_samples)
+        pts_s, col_s = _muestrear_color_curva(curve_s, imagen_rgb, binary_mask, num_samples)
+        pts_w, col_w = _muestrear_color_curva(curve_w, imagen_rgb, binary_mask, num_samples)
+
+        info_n["color_profile"] = col_n
+        info_n["color"] = col_n
+        info_n["curve"] = pts_n
+
+        info_e["color_profile"] = col_e
+        info_e["color"] = col_e
+        info_e["curve"] = pts_e
+
+        info_s["color_profile"] = col_s
+        info_s["color"] = col_s
+        info_s["curve"] = pts_s
+
+        info_w["color_profile"] = col_w
+        info_w["color"] = col_w
+        info_w["curve"] = pts_w
+
     types = [info_n["type"], info_e["type"], info_s["type"], info_w["type"]]
     num_flat = sum(1 for t in types if t == "PLANO")
     topology = "CORNER" if num_flat == 2 else ("BORDER" if num_flat == 1 else "INTERIOR")
     tipo_pieza = "ESQUINA" if num_flat == 2 else ("LADO" if num_flat == 1 else "INTERIOR")
 
-    return {
+    res = {
         "NORTE": info_n,
         "ESTE": info_e,
         "SUR": info_s,
@@ -219,6 +311,9 @@ def detect_corners_and_split_sides(
         "num_planos": num_flat,
         "corners": {"TL": c_tl, "TR": c_tr, "BR": c_br, "BL": c_bl},
     }
+    if es_img_directa:
+        _SIDE_CACHE[clave_cache] = res
+    return res
 
 
 # Alias en español para el trabajo práctico de los estudiantes
@@ -227,10 +322,10 @@ segmentar_borde_en_4 = detect_corners_and_split_sides
 
 
 def analyze_piece_shape(img: np.ndarray) -> Dict[str, Any]:
-    """Analiza la silueta morfológica de una pieza."""
+    """Analiza la silueta morfológica y extrae perfiles de color de una pieza."""
     binary = binarize_piece(img)
     contour = extract_external_contour(binary)
-    sides_info = detect_corners_and_split_sides(contour, binary)
+    sides_info = detect_corners_and_split_sides(contour, binary, imagen_rgb=img)
     return {
         "binary_mask": binary,
         "contour": contour,
@@ -241,24 +336,62 @@ def analyze_piece_shape(img: np.ndarray) -> Dict[str, Any]:
 
 def compute_edge_correlation(side_a: Dict[str, Any], side_b: Dict[str, Any]) -> float:
     """
- 
-    Contrato esperado:
-        Entrada: dos diccionarios de lado, tal como los devuelve `segmentar_borde_en_4`
-        Salida:  float en [0.0, 1.0]. 1.0 = encastre complementario perfecto,
-                 0.0 = incompatibles.
+    Calcula el acople geométrico complementario entre dos bordes enfrentados.
+    Retorna 1.0 para match complementario perfecto (Saliente con Entrante idéntico), 0.0 para incompatibles.
     """
-    raise NotImplementedError(_MSG_EJERCICIO)
+    type_a = side_a["type"]
+    type_b = side_b["type"]
+
+    if type_a == "PLANO" or type_b == "PLANO":
+        return 0.0
+
+    is_sal_a = type_a in ("SALIENTE", "MACHO", "PESTAÑA")
+    is_ent_a = type_a in ("ENTRANTE", "HEMBRA", "HENDIDURA", "MUESCA")
+    is_sal_b = type_b in ("SALIENTE", "MACHO", "PESTAÑA")
+    is_ent_b = type_b in ("ENTRANTE", "HEMBRA", "HENDIDURA", "MUESCA")
+
+    if not ((is_sal_a and is_ent_b) or (is_ent_a and is_sal_b)):
+        return 0.0
+
+    prof_a = side_a["profile"]
+    prof_b = side_b["profile"]
+    prof_b_comp = -prof_b
+
+    norm_a = side_a.get("norm", float(np.linalg.norm(prof_a)))
+    norm_b = side_b.get("norm", float(np.linalg.norm(prof_b)))
+
+    if norm_a < 1e-4 or norm_b < 1e-4:
+        return 0.0
+
+    dot = float(np.dot(prof_a, prof_b_comp))
+    rho = dot / (norm_a * norm_b)
+    if rho <= 0.0:
+        return 0.0
+
+    amp_ratio = min(norm_a, norm_b) / max(norm_a, norm_b)
+    return float(max(0.0, min(1.0, rho * amp_ratio)))
 
 
 def compute_jigsaw_shape_compatibility(side_a: Dict[str, Any], side_b: Dict[str, Any]) -> float:
+    """Calcula el costo morfológico de encastre (0.0 óptimo, 1e5 incompatible)."""
+    corr = compute_edge_correlation(side_a, side_b)
+    if corr <= 1e-3:
+        return 1e5
+    return float((1.0 - corr) * 10.0)
+
+
+def calcular_mse_color_bordes(side_a: Dict[str, Any], side_b: Dict[str, Any]) -> float:
     """
-     costo morfológico de encastre entre dos lados.
- 
-    Contrato esperado:
-        Salida: float, donde 0.0 es el encastre óptimo y un valor muy grande
-                (p. ej. 1e5) marca un par incompatible.
+    Calcula el Error Cuadrático Medio (MSE) entre los perfiles de color de dos bordes enfrentados.
+    Los perfiles corren orientados en el mismo sentido a lo largo de la costura.
     """
-    raise NotImplementedError(_MSG_EJERCICIO)
+    col_a = side_a.get("color_profile")
+    col_b = side_b.get("color_profile")
+    if col_a is None or col_b is None:
+        return 0.0
+
+    diff = col_a - col_b
+    return float(np.mean(diff ** 2))
 
 
 # Caché para no recalcular la forma de la misma pieza repetidamente
@@ -283,15 +416,51 @@ def compatibilidad_forma(
     relacion: str = "horizontal",
 ) -> float:
     """
-     compatibilidad de forma entre dos piezas enteras.
- 
-    Contrato esperado:
-        relacion='horizontal': B va a la derecha de A.
-        relacion='vertical':   B va abajo de A.
-        Salida: float, menor = mejor encastre.
- 
-    Sugerencia: Si llageste hasta aca, te reomiendo `_get_cached_shape` para evitar recalcular la silueta de la misma pieza
-    en cada comparación
+    Compatibilidad morfológica pura entre dos piezas enteras (0.0 óptimo, 1e5 incompatible).
     """
-    raise NotImplementedError(_MSG_EJERCICIO)
+    shape_a = _get_cached_shape(pieza_a, id(pieza_a))
+    shape_b = _get_cached_shape(pieza_b, id(pieza_b))
+
+    if relacion == "horizontal":
+        side_a = shape_a["sides"]["ESTE"]
+        side_b = shape_b["sides"]["OESTE"]
+    elif relacion == "vertical":
+        side_a = shape_a["sides"]["SUR"]
+        side_b = shape_b["sides"]["NORTE"]
+    else:
+        raise ValueError(f"Relación desconocida: '{relacion}'")
+
+    return compute_jigsaw_shape_compatibility(side_a, side_b)
+
+
+def compatibilidad_borde_con_color(
+    pieza_a: np.ndarray,
+    pieza_b: np.ndarray,
+    relacion: str = "horizontal",
+    peso_color: float = 10.0,
+) -> float:
+    """
+    Evalúa la compatibilidad combinando forma geométrica y MSE de color en el borde.
+    Si la forma no encastra, descarta inmediatamente con costo 1e5.
+    Si la forma encastra, desempata utilizando el MSE de los colores reales del borde.
+    """
+    shape_a = _get_cached_shape(pieza_a, id(pieza_a))
+    shape_b = _get_cached_shape(pieza_b, id(pieza_b))
+
+    if relacion == "horizontal":
+        side_a = shape_a["sides"]["ESTE"]
+        side_b = shape_b["sides"]["OESTE"]
+    elif relacion == "vertical":
+        side_a = shape_a["sides"]["SUR"]
+        side_b = shape_b["sides"]["NORTE"]
+    else:
+        raise ValueError(f"Relación desconocida: '{relacion}'")
+
+    corr = compute_edge_correlation(side_a, side_b)
+    if corr <= 1e-3:
+        return 1e5
+
+    costo_geometria = (1.0 - corr) * 10.0
+    costo_color = calcular_mse_color_bordes(side_a, side_b)
+    return float(costo_geometria + peso_color * costo_color)
 

@@ -19,7 +19,12 @@ try:
         TramaMixtaPorPieza,
     )
     from .geometria_jigsaw import JigsawGridGeometry
-    from .analizador_rotacion import aplicar_filtro_rayas_horizontales, rotar_imagen_ortogonal, enderezar_pieza
+    from .analizador_rotacion import (
+        aplicar_filtro_rayas_horizontales,
+        rotar_imagen_ortogonal,
+        enderezar_pieza,
+        estimar_orientacion_fourier,
+    )
 except ImportError:
     from preparacion_imagenes import asegurar_rgb_float
     from degradaciones import (
@@ -32,7 +37,12 @@ except ImportError:
         TramaMixtaPorPieza,
     )
     from geometria_jigsaw import JigsawGridGeometry
-    from analizador_rotacion import aplicar_filtro_rayas_horizontales, rotar_imagen_ortogonal, enderezar_pieza
+    from analizador_rotacion import (
+        aplicar_filtro_rayas_horizontales,
+        rotar_imagen_ortogonal,
+        enderezar_pieza,
+        estimar_orientacion_fourier,
+    )
 
 __all__ = [
     "Rompecabezas",
@@ -117,7 +127,6 @@ class Rompecabezas:
 
         
         if self.nivel == 5:
-            from core.analizador_rotacion import estimar_orientacion_fourier, enderezar_pieza
             periodo = self.metadatos.get("periodo_rayas", 8) if self.metadatos else 8
             piezas_orientadas = []
             for i, p in enumerate(lista_piezas):
@@ -383,18 +392,21 @@ def _ruido_por_escala(tipo: str, nivel: int) -> Callable:
     """Crea una función (img, gen) -> img que aplica `tipo` de ruido al `nivel` (1, 2 o 3) de ESCALAS_RUIDOS."""
     parametros = ESCALAS_RUIDOS[tipo][nivel]
     if tipo == "SALT_PEPPER":
-        probabilidad_sal, probabilidad_pimienta = parametros
+        probabilidad_sal = parametros[0]
+        probabilidad_pimienta = parametros[1]
         return lambda img, gen: agregar_ruido_sal_y_pimienta(
             img, gen, probabilidad_sal=probabilidad_sal, probabilidad_pimienta=probabilidad_pimienta)
     if tipo == "GAUSSIANO":
-        (desviacion_estandar,) = parametros
+        desviacion_estandar = parametros[0]
         return lambda img, gen: agregar_ruido_gaussiano(img, gen, desviacion_estandar=desviacion_estandar)
     if tipo == "UNIFORME":
-        limite_inferior, limite_superior = parametros
+        limite_inferior = parametros[0]
+        limite_superior = parametros[1]
         return lambda img, gen: agregar_ruido_uniforme(
             img, gen, limite_inferior=limite_inferior, limite_superior=limite_superior)
     if tipo == "RAYLEIGH":
-        desplazamiento, parametro_b = parametros
+        desplazamiento = parametros[0]
+        parametro_b = parametros[1]
         return lambda img, gen: agregar_ruido_rayleigh(
             img, gen, desplazamiento=desplazamiento, parametro_b=parametro_b)
     raise ValueError(f"tipo de ruido invalido: {tipo!r}. Se espera uno de {list(ESCALAS_RUIDOS)}")
@@ -516,7 +528,8 @@ def crear_rompecabezas_nivel(
 
     elif nivel == 4:
         h, w = img_ajustada.shape[:2]
-        jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla)
+        usar_discreto = kwargs.get("discrete", True)
+        jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla, discrete=usar_discreto)
 
         piezas_ordenadas = []
         for r in range(filas):
@@ -534,7 +547,14 @@ def crear_rompecabezas_nivel(
             nivel=4,
             imagen_base=img_ajustada,
             imagen_degradada=img_ajustada.copy(),
-            metadatos={"semilla": semilla, "filas": filas, "columnas": columnas, "nivel": 4, "tipo": "jigsaw"},
+            metadatos={
+                "semilla": semilla,
+                "filas": filas,
+                "columnas": columnas,
+                "nivel": 4,
+                "tipo": "jigsaw",
+                "es_discreto": usar_discreto,
+            },
         )
 
     elif nivel == 5:
@@ -545,7 +565,8 @@ def crear_rompecabezas_nivel(
 
 
         h, w = img_ajustada.shape[:2]
-        jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla)
+        usar_discreto = kwargs.get("discrete", True)
+        jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla, discrete=usar_discreto)
 
         piezas_cortadas = []
         for r in range(filas):
@@ -597,40 +618,50 @@ def crear_rompecabezas_nivel(
                 "tipo": "jigsaw_rotado",
                 "periodo_rayas": periodo_rayas,
                 "inclinacion_leve": permitir_inclinacion_leve,
+                "es_discreto": usar_discreto,
             },
         )
 
   
     elif nivel == 6:
-
-       
         RUIDOS_COMPATIBLES_CON_FOURRIER = {
             "GAUSSIANO",
             "RAYLEIGH",
             "UNIFORME",
         }
 
-       
-        problemas_opcionales = rng.choice([1, 2, 3], size=int(rng.integers(1, 3)), replace=False).tolist()
+        # Selección de desafíos opcionales: 1 (Ruido Global), 2 (Color), 3 (Fourier), 5 (Rotación)
+        # Regla estricta: Nivel 3 (ruido periódico) y Nivel 5 (rotación/rayas) NUNCA se juntan.
+        candidatos = [1, 2, 3, 5]
+        cant_problemas = int(rng.integers(1, 4))
+        sorteados = rng.choice(candidatos, size=cant_problemas, replace=False).tolist()
 
-        add_global_noise = (1 in problemas_opcionales)
-        add_color_degradation = (2 in problemas_opcionales)
-        add_fourrier_noise = (3 in problemas_opcionales)
+        # Si salieron 3 y 5 juntos, descartar uno al azar para mantener la exclusión mutua
+        if 3 in sorteados and 5 in sorteados:
+            sorteados.remove(int(rng.choice([3, 5])))
 
+        add_global_noise = (1 in sorteados)
+        add_color_degradation = (2 in sorteados)
+        add_fourrier_noise = (3 in sorteados)
+        add_rotation = (5 in sorteados)
+
+        # 1. Modulación de rayas periódicas para deskewing (solo si Nivel 5 está activo)
+        periodo_rayas = kwargs.get("periodo_rayas", 8)
+        amplitud_rayas = kwargs.get("amplitud_rayas", 0.35)
+        if add_rotation:
+            img_base_mod = aplicar_filtro_rayas_horizontales(img_ajustada, periodo=periodo_rayas, amplitud=amplitud_rayas)
+        else:
+            img_base_mod = img_ajustada.copy()
+
+        # 2. Ruido Global (Nivel 1)
         degradacion_global = None
-        degradacion_por_pieza_secuencia = []
-
         if add_global_noise:
-           
             if add_fourrier_noise:
                 pool_ruidos = sorted(RUIDOS_COMPATIBLES_CON_FOURRIER)
             else:
                 pool_ruidos = list(ESCALAS_RUIDOS)
 
-           
             tipos_ruido = rng.choice(pool_ruidos, size=2, replace=False)
-
-            
             funciones_ruido = []
             for tipo in tipos_ruido:
                 nivel_ruido = int(rng.choice([2, 3]))
@@ -638,34 +669,15 @@ def crear_rompecabezas_nivel(
 
             degradacion_global = componer_degradaciones(*funciones_ruido)
 
-        if add_color_degradation:
-           
-            variante_cromatica = kwargs.get("variante_cromatica", "matiz")
-            degradador_l2 = DegradacionCromaticaPorPieza(variante=variante_cromatica)
-
-            degradacion_por_pieza_secuencia.append(degradador_l2)
-
-        if add_fourrier_noise:
-            degradador_l3 = TramaMixtaPorPieza()
-            degradacion_por_pieza_secuencia.append(degradador_l3)
-
-        degradacion_por_pieza = None
-        if degradacion_por_pieza_secuencia:
-            def degradacion_por_pieza(pieza, indice, generador):
-                resultado = pieza
-                for degradacion in degradacion_por_pieza_secuencia:
-                    resultado = degradacion(resultado, indice, generador)
-                return resultado
-
-       
-        img_degradada = img_ajustada.copy(),
+        img_degradada = img_base_mod.copy()
         if degradacion_global:
             img_degradada = degradacion_global(img_degradada, rng)
 
-
-       
+        # 3. Geometría Jigsaw analítica discreta (Nivel 4)
+        # discrete=True genera pestañas desde una tabla finita (30 variantes) para forzar empates geométricos
         h, w = img_degradada.shape[:2]
-        jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla)
+        usar_discreto = kwargs.get("discrete", True)
+        jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla, discrete=usar_discreto)
 
         piezas_cortadas = []
         for r in range(filas):
@@ -673,39 +685,83 @@ def crear_rompecabezas_nivel(
                 pieza_img, _, _ = jigsaw.extract_piece_image(img_degradada, r, c, padding=kwargs.get("padding", 25))
                 piezas_cortadas.append(pieza_img)
 
+        # 4. Degradaciones por pieza: Color (Nivel 2) y/o Fourier (Nivel 3)
+        degradacion_por_pieza_secuencia = []
+        variante_cromatica = kwargs.get("variante_cromatica", "matiz")
+
+        if add_color_degradation:
+            degradador_l2 = DegradacionCromaticaPorPieza(variante=variante_cromatica)
+            degradacion_por_pieza_secuencia.append(degradador_l2)
+
+        if add_fourrier_noise:
+            degradador_l3 = TramaMixtaPorPieza()
+            degradacion_por_pieza_secuencia.append(degradador_l3)
+
+        def aplicar_degradacion_pieza(pieza, indice, generador):
+            resultado = pieza
+            for degradacion in degradacion_por_pieza_secuencia:
+                resultado = degradacion(resultado, indice, generador)
+            return resultado
+
         piezas_degradadas = []
+        angulos_reales = {}
+        permitir_inclinacion = kwargs.get("inclinacion_leve", True)
 
-        if degradacion_por_pieza:
-            for idx, p in enumerate(piezas_cortadas):
-                mask = (p.max(axis=2) > 0.01)
+        for idx, p in enumerate(piezas_cortadas):
+            mask = (p.max(axis=2) > 0.01)
 
-               
-                p_foto = degradacion_por_pieza(p, idx, rng)
-                p_foto[~mask] = 0.0
+            if degradacion_por_pieza_secuencia:
+                p_proc = aplicar_degradacion_pieza(p, idx, rng)
+                p_proc[~mask] = 0.0
+            else:
+                p_proc = p.copy()
 
-                piezas_degradadas.append(p_rot)
-        else:
-            piezas_degradadas = piezas_cortadas
+            if add_rotation:
+                jitter = float(rng.uniform(-60.0, 60.0)) if permitir_inclinacion else 0.0
+                p_final, _ = enderezar_pieza(p_proc, angulo_grados=jitter, padding=0)
+                angulos_reales[idx] = jitter
+            else:
+                p_final = p_proc
+                angulos_reales[idx] = 0.0
 
-        piezas_barajadas, posicion_real = barajar_piezas(piezas_degradadas, columnas, rng)
+            piezas_degradadas.append(p_final)
+
+        # 5. Barajar piezas
+        total_piezas = len(piezas_degradadas)
+        permutacion = rng.permutation(total_piezas)
+        piezas_barajadas = [piezas_degradadas[i] for i in permutacion]
+
+        posicion_real = {}
+        rotacion_real = {}
+        for id_nuevo, id_orig in enumerate(permutacion):
+            posicion_real[id_nuevo] = (int(id_orig) // columnas, int(id_orig) % columnas)
+            rotacion_real[id_nuevo] = angulos_reales[int(id_orig)]
 
         return Rompecabezas(
             piezas=piezas_barajadas,
             cantidad_filas=filas,
             cantidad_columnas=columnas,
             posicion_real=posicion_real,
+            rotacion_real=rotacion_real if add_rotation else None,
             nivel=6,
             imagen_base=img_ajustada,
             imagen_degradada=img_degradada.copy(),
             metadatos={
-                "semilla": semilla, 
-                "filas": filas, 
-                "columnas": columnas, 
-                "nivel": 6, 
-                "tipo": "random",
-                "tipo_ruido": "Aleatorio"
-                }
-            )
+                "semilla": semilla,
+                "filas": filas,
+                "columnas": columnas,
+                "nivel": 6,
+                "tipo": "jigsaw_integrador",
+                "tipo_ruido": "Aleatorio",
+                "problemas_activos": sorteados,
+                "tiene_ruido_global": add_global_noise,
+                "tiene_color": add_color_degradation,
+                "tiene_fourier": add_fourrier_noise,
+                "tiene_rotacion": add_rotation,
+                "es_discreto": usar_discreto,
+                "variante_cromatica": variante_cromatica if add_color_degradation else None,
+            },
+        )
     else:
         raise ValueError(f"Nivel no válido: {nivel}. Debe ser un entero entre 1 y 6.")
 
@@ -751,6 +807,7 @@ def crear_dataset_desafio_30(
         casos_dataset.append(caso)
 
         if (i + 1) % 5 == 0 or (i + 1) == cantidad_casos:
-            print(f"  -> Caso {i + 1:2d}/{cantidad_casos}: [{archivo_elegido.name}] - Var Ruido: {caso.metadatos['variante_ruido_espacial']} (Semilla {semilla_caso})")
+            tipo_ruido_info = caso.metadatos.get('variante_ruido_espacial', caso.metadatos.get('tipo_ruido', 'N/A'))
+            print(f"  -> Caso {i + 1:2d}/{cantidad_casos}: [{archivo_elegido.name}] - Var Ruido: {tipo_ruido_info} (Semilla {semilla_caso})")
 
     return casos_dataset

@@ -7,14 +7,34 @@ from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 import cv2
 
-__all__ = ["generate_tab_curve", "JigsawGridGeometry"]
+TABLA_BORDES_DISCRETOS = {
+    "perfiles": ("gaussiano", "semicircular"),
+    "posiciones": (0.35, 0.425, 0.50, 0.575, 0.65),  # 5 alturas fijas
+    "profundidades": (0.16, 0.20, 0.24),             # 3 profundidades fijas
+    "anchos": (0.24, 0.28, 0.32, 0.36),              # 4 anchos fijos
+    "ancho": 0.30,                                   # ancho por defecto
+}
+
+__all__ = ["generate_tab_curve", "JigsawGridGeometry", "TABLA_BORDES_DISCRETOS"]
+
+
+def _calcular_bulb(prof: str, x_norm: float) -> float:
+    """Calcula el factor de desplazamiento perpendicular según el perfil del encastre."""
+    if prof in ("circular", "semicircular"):
+        return float(np.sqrt(max(0.0, 1.0 - x_norm ** 2)))
+    elif prof in ("wide", "random"):
+        return float(np.cos(x_norm * np.pi / 2.0) ** 1.3)
+    elif prof in ("gaussiano", "gaussian"):
+        return float(np.exp(-2.5 * (x_norm ** 2)))
+    else:
+        return float(np.cos(x_norm * np.pi / 2.0) ** 1.6)
 
 
 def generate_tab_curve(
     p_start: Tuple[float, float],
     p_end: Tuple[float, float],
     tab_type: int,  # +1: Macho, -1: Hembra, 0: Plano
-    profile_type: str = "standard",  # 'standard', 'circular', 'wide'
+    profile_type: str = "standard",  # 'standard', 'circular', 'semicircular', 'gaussiano', 'wide'
     num_points: int = 60,
     tab_depth_ratio: float = 0.20,
     tab_width_ratio: float = 0.32,
@@ -48,12 +68,7 @@ def generate_tab_curve(
 
         if abs(dist_from_center) <= 1.0:
             x_norm = float(dist_from_center)
-            if profile_type == "circular":
-                bulb = np.sqrt(max(0.0, 1.0 - x_norm ** 2))
-            elif profile_type in ("wide", "random"):
-                bulb = np.cos(x_norm * np.pi / 2.0) ** 1.3
-            else:
-                bulb = np.cos(x_norm * np.pi / 2.0) ** 1.6
+            bulb = _calcular_bulb(profile_type, x_norm)
             offset = depth * bulb
         else:
             offset = 0.0
@@ -79,11 +94,13 @@ class JigsawGridGeometry:
         image_w: int,
         seed: Optional[int] = 42,
         profile_types: Optional[List[str]] = None,
+        discrete: bool = False,
     ):
         self.rows = rows
         self.cols = cols
         self.img_h = image_h
         self.img_w = image_w
+        self.discrete = discrete
 
         self.tile_h = image_h // rows
         self.tile_w = image_w // cols
@@ -98,16 +115,34 @@ class JigsawGridGeometry:
         # +1: saliente hacia abajo (+y), -1: entrante hacia arriba
         self.vert_tabs = rng.choice([1, -1], size=(rows - 1, cols))
 
-        self.allowed_profiles = profile_types if profile_types is not None else ["standard", "circular", "wide"]
-        self.horiz_profile_types = rng.choice(self.allowed_profiles, size=(rows, cols - 1))
-        self.vert_profile_types = rng.choice(self.allowed_profiles, size=(rows - 1, cols))
+        if discrete:
+            perfiles = TABLA_BORDES_DISCRETOS["perfiles"]
+            posiciones = TABLA_BORDES_DISCRETOS["posiciones"]
+            profundidades = TABLA_BORDES_DISCRETOS["profundidades"]
+            anchos = TABLA_BORDES_DISCRETOS.get("anchos", (0.24, 0.28, 0.32, 0.36))
 
-        self.horiz_centers = rng.uniform(0.40, 0.60, size=(rows, cols - 1))
-        self.vert_centers = rng.uniform(0.40, 0.60, size=(rows - 1, cols))
-        self.horiz_depths = rng.uniform(0.18, 0.22, size=(rows, cols - 1))
-        self.vert_depths = rng.uniform(0.18, 0.22, size=(rows - 1, cols))
-        self.horiz_widths = rng.uniform(0.28, 0.34, size=(rows, cols - 1))
-        self.vert_widths = rng.uniform(0.28, 0.34, size=(rows - 1, cols))
+            self.horiz_profile_types = rng.choice(perfiles, size=(rows, cols - 1))
+            self.vert_profile_types = rng.choice(perfiles, size=(rows - 1, cols))
+
+            self.horiz_centers = rng.choice(posiciones, size=(rows, cols - 1))
+            self.vert_centers = rng.choice(posiciones, size=(rows - 1, cols))
+
+            self.horiz_depths = rng.choice(profundidades, size=(rows, cols - 1))
+            self.vert_depths = rng.choice(profundidades, size=(rows - 1, cols))
+
+            self.horiz_widths = rng.choice(anchos, size=(rows, cols - 1))
+            self.vert_widths = rng.choice(anchos, size=(rows - 1, cols))
+        else:
+            self.allowed_profiles = profile_types if profile_types is not None else ["standard", "circular", "wide"]
+            self.horiz_profile_types = rng.choice(self.allowed_profiles, size=(rows, cols - 1))
+            self.vert_profile_types = rng.choice(self.allowed_profiles, size=(rows - 1, cols))
+
+            self.horiz_centers = rng.uniform(0.40, 0.60, size=(rows, cols - 1))
+            self.vert_centers = rng.uniform(0.40, 0.60, size=(rows - 1, cols))
+            self.horiz_depths = rng.uniform(0.18, 0.22, size=(rows, cols - 1))
+            self.vert_depths = rng.uniform(0.18, 0.22, size=(rows - 1, cols))
+            self.horiz_widths = rng.uniform(0.28, 0.34, size=(rows, cols - 1))
+            self.vert_widths = rng.uniform(0.28, 0.34, size=(rows - 1, cols))
 
         self._seams_v = {}  # Costuras horizontales entre fila r y r+1
         self._seams_h = {}  # Costuras verticales entre columna c y c+1
@@ -137,12 +172,7 @@ class JigsawGridGeometry:
                     dist = (s - center) / (width / 2.0)
                     if abs(dist) <= 1.0:
                         x_norm = float(dist)
-                        if prof == "circular":
-                            bulb = np.sqrt(max(0.0, 1.0 - x_norm ** 2))
-                        elif prof in ("wide", "random"):
-                            bulb = np.cos(x_norm * np.pi / 2.0) ** 1.3
-                        else:
-                            bulb = np.cos(x_norm * np.pi / 2.0) ** 1.6
+                        bulb = _calcular_bulb(prof, x_norm)
                     else:
                         bulb = 0.0
                     pts.append(p0 + s * u + (depth * bulb) * n)
@@ -170,12 +200,7 @@ class JigsawGridGeometry:
                     dist = (s - center) / (width / 2.0)
                     if abs(dist) <= 1.0:
                         x_norm = float(dist)
-                        if prof == "circular":
-                            bulb = np.sqrt(max(0.0, 1.0 - x_norm ** 2))
-                        elif prof in ("wide", "random"):
-                            bulb = np.cos(x_norm * np.pi / 2.0) ** 1.3
-                        else:
-                            bulb = np.cos(x_norm * np.pi / 2.0) ** 1.6
+                        bulb = _calcular_bulb(prof, x_norm)
                     else:
                         bulb = 0.0
                     pts.append(p0 + s * u + (depth * bulb) * n)

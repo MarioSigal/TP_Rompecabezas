@@ -29,6 +29,7 @@ from .degradaciones import (
 from .geometria_jigsaw import (
     generate_tab_curve,
     JigsawGridGeometry,
+    TABLA_BORDES_DISCRETOS,
 )
 from .detector_forma import (
     binarize_piece,
@@ -42,7 +43,7 @@ from .detector_forma import (
     analyze_piece_shape,
     compute_edge_correlation,
     compute_jigsaw_shape_compatibility,
-    compatibilidad_forma,
+    calcular_mse_color_bordes,
 )
 from .analizador_rotacion import (
     aplicar_filtro_rayas_horizontales,
@@ -93,11 +94,11 @@ __all__ = [
     "agregar_onda", "agregar_ondas", "agregar_producto_de_ondas", "TIPOS_DE_TRAMA", "TramaMixtaPorPieza",
     "componer_degradaciones",
     # Jigsaw
-    "generate_tab_curve", "JigsawGridGeometry",
+    "generate_tab_curve", "JigsawGridGeometry", "TABLA_BORDES_DISCRETOS",
     # Forma
     "binarize_piece", "extract_external_contour", "detect_jigsaw_corners", "detect_corners_and_split_sides",
     "segmentar_lados_pieza", "segmentar_borde_en_4", "pasar_borde_a_1d", "extraer_perfil_1d", "analyze_piece_shape",
-    "compute_edge_correlation", "compute_jigsaw_shape_compatibility", "compatibilidad_forma",
+    "compute_edge_correlation", "compute_jigsaw_shape_compatibility", "calcular_mse_color_bordes",
     # Rotación
     "aplicar_filtro_rayas_horizontales", "estimar_orientacion_fourier", "estimar_orientacion_sobel", "enderezar_pieza", "rotar_imagen_ortogonal",
     # Bordes y afinidades

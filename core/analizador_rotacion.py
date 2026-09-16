@@ -54,13 +54,36 @@ def estimar_orientacion_fourier(
     radio_dc: Optional[int] = None,
 ) -> float:
     """
-    Contrato esperado:
-        Entrada: pieza rotada, con la modulación de rayas de
-                 `aplicar_filtro_rayas_horizontales` y período `periodo_esperado`.
-        Salida:  ángulo en grados que hay que pasarle a `enderezar_pieza` para
-                 llevar la pieza a 0°.
+    Estima el ángulo de inclinación mediante el pico espectral dominante en Fourier 2D.
+    Retorna el ángulo en grados necesario para enderezar la pieza a 0° con enderezar_pieza.
     """
-    raise NotImplementedError(_MSG_EJERCICIO)
+    if radio_dc is not None:
+        radio_exclusion_dc = radio_dc
+    if imagen.ndim == 3:
+        if issubclass(imagen.dtype.type, np.floating):
+            gray = cv2.cvtColor((np.clip(imagen, 0.0, 1.0) * 255.0).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32)
+        else:
+            gray = cv2.cvtColor(imagen, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    else:
+        gray = imagen.astype(np.float32)
+
+    # 1. Transformada 2D de Fourier centrada
+    F = np.fft.fftshift(np.fft.fft2(gray))
+    magnitud = np.abs(F)
+
+    # 2. Anular la componente continua (DC)
+    cy, cx = magnitud.shape[0] // 2, magnitud.shape[1] // 2
+    r_dc = radio_exclusion_dc
+    magnitud[cy - r_dc : cy + r_dc + 1, cx - r_dc : cx + r_dc + 1] = 0.0
+
+    # 3. Encontrar el pico más intenso fuera de DC
+    yp, xp = np.unravel_index(np.argmax(magnitud), magnitud.shape)
+    dy, dx = yp - cy, xp - cx
+    if dy > 0:
+        dy, dx = -dy, -dx
+
+    # Ángulo para enderezar con enderezar_pieza:
+    return float(-np.degrees(np.arctan2(dx, -dy)))
 
 
 def estimar_orientacion_sobel(
