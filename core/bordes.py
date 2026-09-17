@@ -7,7 +7,7 @@ Proporciona:
   utilizando CUALQUIER función de compatibilidad suministrada por los alumnos.
 """
 
-from typing import Callable, Dict, List, Optional, Union, Any
+from typing import Callable, Dict, List, Optional
 import numpy as np
 from skimage.filters import sobel_v, sobel_h
 from skimage.color import rgb2ycbcr
@@ -76,69 +76,43 @@ def extraer_banda_borde(
 
 
 def compatibilidad_baseline(
-    pieza_a: Union[np.ndarray, Dict[str, Any]],
-    pieza_b: Union[np.ndarray, Dict[str, Any]],
-    relacion: Optional[str] = None,
+    pieza_a: np.ndarray,
+    pieza_b: np.ndarray,
+    relacion: str,
 ) -> float:
     """
-    Calcula el costo de acople entre dos piezas o dos bordes usando el error cuadrático medio (MSE).
+    Calcula el costo de acople entre dos piezas usando el error cuadratico medio (Baseline).
+    El cuadrado (en vez de valor absoluto) penaliza mucho mas fuerte los saltos grandes y
+    casi no penaliza los chicos, lo que agudiza la separacion entre vecinos verdaderos
+    (saltos chicos) y falsos (saltos grandes).
     Cuanto MENOR sea el resultado, mayor es la similitud de los bordes.
 
-    Soporta múltiples formas de uso:
-    1. Perfiles de color o lados directos (ej. para el Nivel 4 y 6 con 'segmentar_borde_en_4'):
-       >>> costo = compatibilidad_baseline(lado_a["color_profile"], lado_b["color_profile"])
-       >>> costo = compatibilidad_baseline(lado_a, lado_b)
-    2. Piezas con encastres curvos (Jigsaw) con relación ('horizontal' o 'vertical'):
-       Extrae automáticamente las costuras curvas mediante 'segmentar_borde_en_4'
-       y calcula el MSE de los perfiles de color de la costura.
-    3. Piezas rectangulares estándar con relación:
-       >>> costo = compatibilidad_baseline(pieza_1, pieza_2, relacion="horizontal")
+    Parámetros:
+    pieza_a: np.ndarray
+        Pieza base (origen).
+    pieza_b: np.ndarray
+        Pieza vecina propuesta.
+    relacion: str
+        'horizontal' (B a la derecha de A) o 'vertical' (B abajo de A).
+
+    Retorna:
+    float
+        Valor de error/costo promedio entre las líneas externas de los bordes.
+
+    Ejemplo de uso
+    --------------
+    >>> pieza_1 = np.ones((30, 30, 3)) * 100
+    >>> pieza_2 = np.ones((30, 30, 3)) * 105
+    >>> costo = compatibilidad_baseline(pieza_1, pieza_2, relacion="horizontal")
+    >>> print(f"Costo de poner pieza_2 a la derecha de pieza_1: {costo:.1f}")
+    Costo de poner pieza_2 a la derecha de pieza_1: 250.0
     """
-    def _extraer_vector_color(obj):
-        if isinstance(obj, dict):
-            for k in ("color_profile", "color", "profile"):
-                if k in obj and obj[k] is not None:
-                    return np.asarray(obj[k], dtype=np.float64)
-            raise ValueError(f"El diccionario de lado no contiene 'color_profile' ni 'profile': {list(obj.keys())}")
-        return np.asarray(obj, dtype=np.float64)
+    if relacion not in BORDES_ENFRENTADOS:
+        raise ValueError(f"Relación inválida: '{relacion}'. Se espera 'horizontal' o 'vertical'.")
 
-    # Detectar si pieza_a o pieza_b son vectores/lados directos o si no se pasó relación
-    es_lado_o_vector_a = isinstance(pieza_a, dict) or (
-        isinstance(pieza_a, np.ndarray) and (pieza_a.ndim <= 2 or (pieza_a.ndim == 3 and min(pieza_a.shape[:2]) <= 3))
-    )
-    es_lado_o_vector_b = isinstance(pieza_b, dict) or (
-        isinstance(pieza_b, np.ndarray) and (pieza_b.ndim <= 2 or (pieza_b.ndim == 3 and min(pieza_b.shape[:2]) <= 3))
-    )
-
-    if es_lado_o_vector_a or es_lado_o_vector_b or relacion is None:
-        banda_a = _extraer_vector_color(pieza_a)
-        banda_b = _extraer_vector_color(pieza_b)
-    else:
-        if relacion not in BORDES_ENFRENTADOS:
-            raise ValueError(f"Relación inválida: '{relacion}'. Se espera 'horizontal' o 'vertical'.")
-
-        lado_a, lado_b = BORDES_ENFRENTADOS[relacion]
-
-        # Detectar si son piezas Jigsaw (con fondo negro o padding en las esquinas)
-        es_jigsaw = (
-            np.all(pieza_a[0, 0] < 0.01) and np.all(pieza_a[-1, -1] < 0.01)
-        ) or (
-            np.mean(np.all(pieza_a < 0.005, axis=-1) if pieza_a.ndim == 3 else (pieza_a < 0.005)) > 0.05
-        )
-
-        if es_jigsaw:
-            try:
-                from .detector_forma import segmentar_borde_en_4
-            except ImportError:
-                from detector_forma import segmentar_borde_en_4
-
-            info_a = segmentar_borde_en_4(pieza_a)
-            info_b = segmentar_borde_en_4(pieza_b)
-            banda_a = np.asarray(info_a[lado_a]["color_profile"], dtype=np.float64)
-            banda_b = np.asarray(info_b[lado_b]["color_profile"], dtype=np.float64)
-        else:
-            banda_a = extraer_banda_borde(pieza_a, lado_a, cantidad_lineas=1)
-            banda_b = extraer_banda_borde(pieza_b, lado_b, cantidad_lineas=1)
+    lado_a, lado_b = BORDES_ENFRENTADOS[relacion]
+    banda_a = extraer_banda_borde(pieza_a, lado_a, cantidad_lineas=1)
+    banda_b = extraer_banda_borde(pieza_b, lado_b, cantidad_lineas=1)
 
     if banda_a.shape[0] != banda_b.shape[0]:
         n_samples = min(banda_a.shape[0], banda_b.shape[0])
@@ -147,10 +121,10 @@ def compatibilidad_baseline(
         banda_a = banda_a[idx_a]
         banda_b = banda_b[idx_b]
 
-    # Error cuadrático medio por punto
-    if banda_a.ndim >= 2 and banda_a.shape[-1] == 3:
-        return float(np.mean(np.sum((banda_a - banda_b) ** 2, axis=-1)))
-    return float(np.linalg.norm(banda_a - banda_b) ** 2)
+    #Error cuadratico en vez de absoluto: penaliza mucho mas fuerte los saltos
+    #grandes y casi no penaliza los chicos, lo que agudiza la separacion entre
+    #vecinos verdaderos (saltos chicos) y falsos (saltos grandes)
+    return float(np.linalg.norm(banda_a - banda_b)**2)
 
 def _gradientes_franja(franja):
     """

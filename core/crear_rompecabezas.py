@@ -10,39 +10,31 @@ import cv2
 try:
     from .preparacion_imagenes import asegurar_rgb_float
     from .degradaciones import (
-        agregar_ruido_gaussiano,
-        agregar_ruido_sal_y_pimienta,
-        agregar_ruido_uniforme,
-        agregar_ruido_rayleigh,
-        componer_degradaciones,
-        DegradacionCromaticaPorPieza,
-        TramaMixtaPorPieza,
+    agregar_ruido_gaussiano,
+    agregar_ruido_sal_y_pimienta,
+    agregar_ruido_uniforme,
+    agregar_ruido_rayleigh,
+    componer_degradaciones,
+    DegradacionPorPiezaNivel2,
+    sortear_variante_nivel2,
+    TramaMixtaPorPieza,
     )
     from .geometria_jigsaw import JigsawGridGeometry
-    from .analizador_rotacion import (
-        aplicar_filtro_rayas_horizontales,
-        rotar_imagen_ortogonal,
-        enderezar_pieza,
-        estimar_orientacion_fourier,
-    )
+    from .analizador_rotacion import aplicar_filtro_rayas_horizontales, rotar_imagen_ortogonal, enderezar_pieza
 except ImportError:
     from preparacion_imagenes import asegurar_rgb_float
     from degradaciones import (
-        agregar_ruido_gaussiano,
-        agregar_ruido_sal_y_pimienta,
-        agregar_ruido_uniforme,
-        agregar_ruido_rayleigh,
-        componer_degradaciones,
-        DegradacionCromaticaPorPieza,
-        TramaMixtaPorPieza,
+    agregar_ruido_gaussiano,
+    agregar_ruido_sal_y_pimienta,
+    agregar_ruido_uniforme,
+    agregar_ruido_rayleigh,
+    componer_degradaciones,
+    DegradacionPorPiezaNivel2,
+    sortear_variante_nivel2,
+    TramaMixtaPorPieza,
     )
     from geometria_jigsaw import JigsawGridGeometry
-    from analizador_rotacion import (
-        aplicar_filtro_rayas_horizontales,
-        rotar_imagen_ortogonal,
-        enderezar_pieza,
-        estimar_orientacion_fourier,
-    )
+    from analizador_rotacion import aplicar_filtro_rayas_horizontales, rotar_imagen_ortogonal, enderezar_pieza
 
 __all__ = [
     "Rompecabezas",
@@ -125,24 +117,7 @@ class Rompecabezas:
 
         lista_piezas = piezas if piezas is not None else self.piezas
 
-        
-        if self.nivel == 5:
-            periodo = self.metadatos.get("periodo_rayas", 8) if self.metadatos else 8
-            piezas_orientadas = []
-            for i, p in enumerate(lista_piezas):
-              
-                if self.rotacion_real and i in self.rotacion_real:
-                    jitter = self.rotacion_real[i]
-                    p_end, _ = enderezar_pieza(self.piezas[i], angulo_grados=-jitter, padding=0)
-                    piezas_orientadas.append(p_end)
-                else:
-                    ang = estimar_orientacion_fourier(p, periodo_esperado=periodo)
-                    if abs(ang) > 0.5:
-                        p_end, _ = enderezar_pieza(p, angulo_grados=ang, padding=0)
-                        piezas_orientadas.append(p_end)
-                    else:
-                        piezas_orientadas.append(p)
-            lista_piezas = piezas_orientadas
+
 
         if self.imagen_base is not None:
             h, w = self.imagen_base.shape[:2]
@@ -392,21 +367,18 @@ def _ruido_por_escala(tipo: str, nivel: int) -> Callable:
     """Crea una función (img, gen) -> img que aplica `tipo` de ruido al `nivel` (1, 2 o 3) de ESCALAS_RUIDOS."""
     parametros = ESCALAS_RUIDOS[tipo][nivel]
     if tipo == "SALT_PEPPER":
-        probabilidad_sal = parametros[0]
-        probabilidad_pimienta = parametros[1]
+        probabilidad_sal, probabilidad_pimienta = parametros
         return lambda img, gen: agregar_ruido_sal_y_pimienta(
             img, gen, probabilidad_sal=probabilidad_sal, probabilidad_pimienta=probabilidad_pimienta)
     if tipo == "GAUSSIANO":
-        desviacion_estandar = parametros[0]
+        (desviacion_estandar,) = parametros
         return lambda img, gen: agregar_ruido_gaussiano(img, gen, desviacion_estandar=desviacion_estandar)
     if tipo == "UNIFORME":
-        limite_inferior = parametros[0]
-        limite_superior = parametros[1]
+        limite_inferior, limite_superior = parametros
         return lambda img, gen: agregar_ruido_uniforme(
             img, gen, limite_inferior=limite_inferior, limite_superior=limite_superior)
     if tipo == "RAYLEIGH":
-        desplazamiento = parametros[0]
-        parametro_b = parametros[1]
+        desplazamiento, parametro_b = parametros
         return lambda img, gen: agregar_ruido_rayleigh(
             img, gen, desplazamiento=desplazamiento, parametro_b=parametro_b)
     raise ValueError(f"tipo de ruido invalido: {tipo!r}. Se espera uno de {list(ESCALAS_RUIDOS)}")
@@ -457,7 +429,7 @@ VARIANTES_NIVEL_1 = {
                     (str(tipo), int(gen.choice([2, 3])))
                     for tipo in gen.choice(list(ESCALAS_RUIDOS), size=2, replace=False)
                 ],
-                key=lambda par: 1 if par[0] == "SALT_PEPPER" else 0,
+                key=lambda par: par[0] == "SALT_PEPPER",
             )
         ])(img, gen),
     },
@@ -500,8 +472,13 @@ def crear_rompecabezas_nivel(
 
 
     elif nivel == 2:
-        variante_cromatica = kwargs.get("variante_cromatica", "matiz")
-        degradador_l2 = DegradacionCromaticaPorPieza(variante=variante_cromatica)
+        variante_l2 = kwargs.get("variante_nivel2", None)
+        if variante_l2 is None:
+            variante_l2 = sortear_variante_nivel2(semilla)
+        degradador_l2 = DegradacionPorPiezaNivel2(
+            variante=variante_l2,
+            cantidad_piezas=filas * columnas,
+        )
 
         return armar_caso_rompecabezas(
             imagen_base=img_ajustada,
@@ -510,7 +487,7 @@ def crear_rompecabezas_nivel(
             degradacion_por_pieza=degradador_l2,
             semilla=semilla,
             nivel=2,
-            metadatos_adicionales={"tipo_ruido": "cromatico_por_pieza", "variante_cromatica": variante_cromatica},
+            metadatos_adicionales={"tipo_ruido": "fotometrico_por_pieza"},
         )
 
     elif nivel == 3:
@@ -547,22 +524,14 @@ def crear_rompecabezas_nivel(
             nivel=4,
             imagen_base=img_ajustada,
             imagen_degradada=img_ajustada.copy(),
-            metadatos={
-                "semilla": semilla,
-                "filas": filas,
-                "columnas": columnas,
-                "nivel": 4,
-                "tipo": "jigsaw",
-                "es_discreto": usar_discreto,
-            },
+            metadatos={"semilla": semilla, "filas": filas, "columnas": columnas, "nivel": 4, "tipo": "jigsaw"},
         )
 
     elif nivel == 5:
         
         periodo_rayas = kwargs.get("periodo_rayas", 8)
-        amplitud_rayas = kwargs.get("amplitud_rayas", 0.35)
+        amplitud_rayas = kwargs.get("amplitud_rayas", 0.10)
         img_rayada = aplicar_filtro_rayas_horizontales(img_ajustada, periodo=periodo_rayas, amplitud=amplitud_rayas)
-
 
         h, w = img_ajustada.shape[:2]
         usar_discreto = kwargs.get("discrete", True)
@@ -582,7 +551,7 @@ def crear_rompecabezas_nivel(
 
         for idx, p in enumerate(piezas_cortadas):
             if permitir_inclinacion_leve:
-                jitter = float(rng.uniform(-60.0, 60.0))
+                jitter = float(rng.uniform(5.0, 60.0))
                 p_rot, _ = enderezar_pieza(p, angulo_grados=jitter, padding=0)
             else:
                 jitter = 0.0
@@ -611,6 +580,7 @@ def crear_rompecabezas_nivel(
             imagen_base=img_ajustada,
             imagen_degradada=img_rayada,
             metadatos={
+                "rotacion_real": rotacion_real,
                 "semilla": semilla,
                 "filas": filas,
                 "columnas": columnas,
@@ -618,130 +588,122 @@ def crear_rompecabezas_nivel(
                 "tipo": "jigsaw_rotado",
                 "periodo_rayas": periodo_rayas,
                 "inclinacion_leve": permitir_inclinacion_leve,
-                "es_discreto": usar_discreto,
             },
         )
 
   
     elif nivel == 6:
-        RUIDOS_COMPATIBLES_CON_FOURRIER = {
-            "GAUSSIANO",
-            "RAYLEIGH",
-            "UNIFORME",
-        }
-
-        # Selección de desafíos opcionales: 1 (Ruido Global), 2 (Color), 3 (Fourier), 5 (Rotación)
-        # Regla estricta: Nivel 3 (ruido periódico) y Nivel 5 (rotación/rayas) NUNCA se juntan.
+        RUIDOS_COMPATIBLES_CON_FOURIER = ("GAUSSIANO", "RAYLEIGH", "UNIFORME")
+ 
+        #Desafios opcionales: 1 (ruido global), 2 (color), 3 (Fourier), 5 (rotacion).
+        #Regla estricta: 3 y 5 NUNCA se juntan 
         candidatos = [1, 2, 3, 5]
-        cant_problemas = int(rng.integers(1, 4))
-        sorteados = rng.choice(candidatos, size=cant_problemas, replace=False).tolist()
-
-        # Si salieron 3 y 5 juntos, descartar uno al azar para mantener la exclusión mutua
+        cantidad_problemas = int(rng.integers(1, 4))
+        sorteados = rng.choice(candidatos, size=cantidad_problemas, replace=False).tolist()
+ 
         if 3 in sorteados and 5 in sorteados:
             sorteados.remove(int(rng.choice([3, 5])))
-
+ 
         add_global_noise = (1 in sorteados)
         add_color_degradation = (2 in sorteados)
         add_fourrier_noise = (3 in sorteados)
         add_rotation = (5 in sorteados)
-
-        # 1. Modulación de rayas periódicas para deskewing (solo si Nivel 5 está activo)
+ 
+        #1. Rayas periodicas (solo si hay rotacion, son la referencia del angulo)
         periodo_rayas = kwargs.get("periodo_rayas", 8)
         amplitud_rayas = kwargs.get("amplitud_rayas", 0.35)
         if add_rotation:
-            img_base_mod = aplicar_filtro_rayas_horizontales(img_ajustada, periodo=periodo_rayas, amplitud=amplitud_rayas)
+            img_base_mod = aplicar_filtro_rayas_horizontales(
+                img_ajustada, periodo=periodo_rayas, amplitud=amplitud_rayas)
         else:
             img_base_mod = img_ajustada.copy()
-
-        # 2. Ruido Global (Nivel 1)
+ 
+        # 2. Ruido global sobre la imagen entera (Nivel 1)
         degradacion_global = None
+        tipos_ruido = []
         if add_global_noise:
-            if add_fourrier_noise:
-                pool_ruidos = sorted(RUIDOS_COMPATIBLES_CON_FOURRIER)
-            else:
-                pool_ruidos = list(ESCALAS_RUIDOS)
-
+            pool_ruidos = (list(RUIDOS_COMPATIBLES_CON_FOURIER) if add_fourrier_noise
+                           else list(ESCALAS_RUIDOS))
             tipos_ruido = rng.choice(pool_ruidos, size=2, replace=False).tolist()
-            # Orden obligatorio: ruido continuo primero, sal y pimienta al final
-            # para que los píxeles impulsivos (0.0 y 1.0) no sean contaminados por el ruido continuo.
+ 
             tipos_ruido.sort(key=lambda t: 1 if t == "SALT_PEPPER" else 0)
-
-            funciones_ruido = []
-            for tipo in tipos_ruido:
-                nivel_ruido = int(rng.choice([2, 3]))
-                funciones_ruido.append(_ruido_por_escala(str(tipo), nivel_ruido))
-
+ 
+            funciones_ruido = [_ruido_por_escala(str(t), int(rng.choice([2, 3]))) for t in tipos_ruido]
             degradacion_global = componer_degradaciones(*funciones_ruido)
-
+ 
         img_degradada = img_base_mod.copy()
-        if degradacion_global:
+        if degradacion_global is not None:
             img_degradada = degradacion_global(img_degradada, rng)
-
-        # 3. Geometría Jigsaw analítica discreta (Nivel 4)
-        # discrete=True genera pestañas desde una tabla finita (30 variantes) para forzar empates geométricos
-        h, w = img_degradada.shape[:2]
+ 
+        #3. Geometria jigsaw (Nivel 4)
+        # discrete=True sortea los encastres de una tabla finita: varias costuras comparten forma exacta, 
+        # asi la correlacion geometrica no alcanza sola.
+        alto_img, ancho_img = img_degradada.shape[:2]
         usar_discreto = kwargs.get("discrete", True)
-        jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla, discrete=usar_discreto)
-
+        jigsaw = JigsawGridGeometry(filas, columnas, alto_img, ancho_img,
+                                    seed=semilla, discrete=usar_discreto)
+ 
         piezas_cortadas = []
         for r in range(filas):
             for c in range(columnas):
-                pieza_img, _, _ = jigsaw.extract_piece_image(img_degradada, r, c, padding=kwargs.get("padding", 25))
+                pieza_img, _, _ = jigsaw.extract_piece_image(
+                    img_degradada, r, c, padding=kwargs.get("padding", 25))
                 piezas_cortadas.append(pieza_img)
-
-        # 4. Degradaciones por pieza: Color (Nivel 2) y/o Fourier (Nivel 3)
+ 
+        #4. Degradaciones por pieza: color (Nivel 2) y trama (Nivel 3)
         degradacion_por_pieza_secuencia = []
-        variante_cromatica = kwargs.get("variante_cromatica", "matiz")
-
+ 
+        variante_l2 = None
         if add_color_degradation:
-            degradador_l2 = DegradacionCromaticaPorPieza(variante=variante_cromatica)
+            variante_l2 = kwargs.get("variante_nivel2", None)
+            if variante_l2 is None:
+                variante_l2 = sortear_variante_nivel2(semilla)
+            degradador_l2 = DegradacionPorPiezaNivel2(
+                variante=variante_l2, cantidad_piezas=filas * columnas)
             degradacion_por_pieza_secuencia.append(degradador_l2)
-
+ 
         if add_fourrier_noise:
             degradador_l3 = TramaMixtaPorPieza()
             degradacion_por_pieza_secuencia.append(degradador_l3)
-
-        def aplicar_degradacion_pieza(pieza, indice, generador):
-            resultado = pieza
-            for degradacion in degradacion_por_pieza_secuencia:
-                resultado = degradacion(resultado, indice, generador)
-            return resultado
-
+ 
         piezas_degradadas = []
         angulos_reales = {}
         permitir_inclinacion = kwargs.get("inclinacion_leve", True)
-
+ 
         for idx, p in enumerate(piezas_cortadas):
-            mask = (p.max(axis=2) > 0.01)
-
-            if degradacion_por_pieza_secuencia:
-                p_proc = aplicar_degradacion_pieza(p, idx, rng)
-                p_proc[~mask] = 0.0
-            else:
+            adentro = (p.max(axis=2) > 0.01)
+ 
+            p_proc = p
+            for degradacion in degradacion_por_pieza_secuencia:
+                p_proc = degradacion(p_proc, idx, rng)
+                # Re-enmascarar DESPUES DE CADA degradacion: la trama periodica
+                # suma ondas en todo el lienzo y dejaria el fondo distinto de
+                # negro puro, rompiendo la deteccion de contorno del Nivel 4.
+                p_proc[~adentro] = 0.0
+            if not degradacion_por_pieza_secuencia:
                 p_proc = p.copy()
-
-            if add_rotation:
-                jitter = float(rng.uniform(-60.0, 60.0)) if permitir_inclinacion else 0.0
+ 
+            if add_rotation and permitir_inclinacion:
+                jitter = float(rng.uniform(-60.0, 60.0))
                 p_final, _ = enderezar_pieza(p_proc, angulo_grados=jitter, padding=0)
-                angulos_reales[idx] = jitter
             else:
+                jitter = 0.0
                 p_final = p_proc
-                angulos_reales[idx] = 0.0
-
+ 
+            angulos_reales[idx] = jitter
             piezas_degradadas.append(p_final)
-
-        # 5. Barajar piezas
-        total_piezas = len(piezas_degradadas)
-        permutacion = rng.permutation(total_piezas)
+ 
+        #5. Barajar
+        permutacion = rng.permutation(len(piezas_degradadas))
         piezas_barajadas = [piezas_degradadas[i] for i in permutacion]
-
+ 
         posicion_real = {}
         rotacion_real = {}
         for id_nuevo, id_orig in enumerate(permutacion):
             posicion_real[id_nuevo] = (int(id_orig) // columnas, int(id_orig) % columnas)
             rotacion_real[id_nuevo] = angulos_reales[int(id_orig)]
-
-        return Rompecabezas(
+ 
+        caso = Rompecabezas(
             piezas=piezas_barajadas,
             cantidad_filas=filas,
             cantidad_columnas=columnas,
@@ -749,46 +711,36 @@ def crear_rompecabezas_nivel(
             rotacion_real=rotacion_real if add_rotation else None,
             nivel=6,
             imagen_base=img_ajustada,
-            imagen_degradada=img_degradada.copy(),
+            imagen_degradada=img_degradada,
             metadatos={
                 "semilla": semilla,
                 "filas": filas,
                 "columnas": columnas,
                 "nivel": 6,
                 "tipo": "jigsaw_integrador",
-                "tipo_ruido": "Aleatorio",
-                "problemas_activos": sorteados,
-                "tiene_ruido_global": add_global_noise,
-                "tipos_ruido_global": tipos_ruido if add_global_noise else [],
-                "tiene_color": add_color_degradation,
-                "tiene_fourier": add_fourrier_noise,
-                "tiene_rotacion": add_rotation,
                 "es_discreto": usar_discreto,
-                "variante_cromatica": variante_cromatica if add_color_degradation else None,
             },
         )
-    else:
-        raise ValueError(f"Nivel no válido: {nivel}. Debe ser un entero entre 1 y 6.")
+        return caso
 
 
 def _buscar_directorio_imagenes_base() -> Path:
-    """Busca y retorna el directorio con las imágenes base de rompecabezas."""
+    """Busca el directorio con las imagenes base, tolerando la ruta de Colab."""
     candidatas = [
         Path("imagenes/base"),
-        Path("TP_FINAL_ALUMNOS/imagenes/base"),
         Path("repo_tp/imagenes/base"),
         Path(__file__).resolve().parent.parent / "imagenes" / "base",
     ]
     for c in candidatas:
         if c.exists() and any(c.glob("*.png")):
             return c
-    for root in [Path.cwd(), Path(__file__).resolve().parent.parent]:
-        for p in root.rglob("imagenes/base"):
+    for raiz in (Path.cwd(), Path(__file__).resolve().parent.parent):
+        for p in raiz.rglob("imagenes/base"):
             if p.is_dir() and any(p.glob("*.png")):
                 return p
     return Path("imagenes/base")
-
-
+ 
+ 
 def generar_caso_desafio_30(
     indice_caso: int,
     semilla: int = 42,
@@ -798,113 +750,46 @@ def generar_caso_desafio_30(
     total_casos: int = 30,
 ) -> Rompecabezas:
     """
-    Construye y retorna un único rompecabezas (caso `indice_caso` de 0 a `total_casos - 1`)
-    del Desafío Integrador Nivel 6. Permite procesar los rompecabezas caso por caso
-    sin saturar la memoria RAM.
+    Genera UN solo caso del desafio integrador, el numero `indice_caso`.
     """
-    if directorio_imagenes is None:
-        dir_img = _buscar_directorio_imagenes_base()
-    else:
-        dir_img = Path(directorio_imagenes)
-
+    dir_img = Path(directorio_imagenes) if directorio_imagenes else _buscar_directorio_imagenes_base()
+ 
     extensiones = ["*.png", "*.jpg", "*.jpeg", "*.bmp", "*.webp"]
     archivos = []
     for ext in extensiones:
         archivos.extend(sorted(dir_img.glob(ext)))
-
     if not archivos:
-        raise FileNotFoundError(f"No se encontraron imágenes en el directorio '{dir_img}'.")
-
+        raise FileNotFoundError(f"No se encontraron imágenes en '{dir_img}'.")
+ 
     archivo_elegido = archivos[indice_caso % len(archivos)]
-    img_raw = asegurar_rgb_float(cv2.imread(str(archivo_elegido))[:, :, ::-1].astype(np.float64) / 255.0)
-
-    semilla_caso = semilla + indice_caso
+    img_raw = asegurar_rgb_float(
+        cv2.imread(str(archivo_elegido))[:, :, ::-1].astype(np.float64) / 255.0)
+ 
     caso = crear_rompecabezas_nivel(
         imagen_base=img_raw,
         nivel=6,
         filas=filas,
         columnas=columnas,
-        semilla=semilla_caso,
+        semilla=semilla + indice_caso,
     )
     caso.metadatos["archivo_origen"] = archivo_elegido.name
     caso.metadatos["id_caso"] = indice_caso + 1
     return caso
-
-
-def iterar_desafio_30(
-    semilla: int = 42,
-    filas: int = 4,
-    columnas: int = 4,
-    cantidad_casos: int = 30,
-    directorio_imagenes: Optional[Union[str, Path]] = None,
-):
-    """
-    Generador que produce uno a uno los rompecabezas del Desafío Integrador Nivel 6.
-    Yields:
-        (indice: int, total: int, puzzle: Rompecabezas)
-    """
-    for i in range(cantidad_casos):
-        puzzle = generar_caso_desafio_30(
-            indice_caso=i,
-            semilla=semilla,
-            filas=filas,
-            columnas=columnas,
-            directorio_imagenes=directorio_imagenes,
-            total_casos=cantidad_casos,
-        )
-        yield i, cantidad_casos, puzzle
-
-
+ 
+ 
 def crear_dataset_desafio_30(
     directorio_imagenes: Optional[Union[str, Path]] = None,
-    directorio_salida: Optional[Union[str, Path]] = None,
     filas: int = 4,
     columnas: int = 4,
-    semilla_base: int = 1000,
+    semilla_base: int = 42,
     cantidad_casos: int = 30,
 ) -> List[Rompecabezas]:
     """
-    Crea y retorna la lista de rompecabezas integradores.
-    Nota: Para grillas grandes (ej. 15x15), se recomienda utilizar `generar_caso_desafio_30`
-    o `iterar_desafio_30` para no saturar la memoria RAM.
+    Construye los `cantidad_casos` rompecabezas del desafio integrador.
     """
-    casos_dataset = []
-    print(f"[Dataset] Generando {cantidad_casos} rompecabezas de {filas}x{columnas} ({filas * columnas} piezas c/u)...")
-
-    for i in range(cantidad_casos):
-        caso = generar_caso_desafio_30(
-            indice_caso=i,
-            semilla=semilla_base,
-            filas=filas,
-            columnas=columnas,
-            directorio_imagenes=directorio_imagenes,
-            total_casos=cantidad_casos,
-        )
-        casos_dataset.append(caso)
-
-        if (i + 1) % 5 == 0 or (i + 1) == cantidad_casos:
-            tipo_ruido_info = caso.metadatos.get('variante_ruido_espacial', caso.metadatos.get('tipo_ruido', 'N/A'))
-            nombre = caso.metadatos.get('archivo_origen', 'N/A')
-            print(f"  -> Caso {i + 1:2d}/{cantidad_casos}: [{nombre}] - Var Ruido: {tipo_ruido_info} (Semilla {caso.metadatos['semilla']})")
-
-    return casos_dataset
-
-
-def generar_desafio_30(
-    semilla: int = 42,
-    filas: int = 4,
-    columnas: int = 4,
-    directorio_imagenes: Optional[Union[str, Path]] = None,
-    cantidad_casos: int = 30,
-) -> List[Rompecabezas]:
-    """
-    Función que construye los 30 rompecabezas del Desafío Integrador Nivel 6.
-    """
-    return crear_dataset_desafio_30(
-        directorio_imagenes=directorio_imagenes,
-        filas=filas,
-        columnas=columnas,
-        semilla_base=semilla,
-        cantidad_casos=cantidad_casos,
-    )
-
+    return [
+        generar_caso_desafio_30(i, semilla=semilla_base, filas=filas,
+                                columnas=columnas, directorio_imagenes=directorio_imagenes,
+                                total_casos=cantidad_casos)
+        for i in range(cantidad_casos)
+    ]

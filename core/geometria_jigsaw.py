@@ -7,19 +7,22 @@ from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 import cv2
 
+
+#Tabla finita de generacion de bordes
 TABLA_BORDES_DISCRETOS = {
     "perfiles": ("gaussiano", "semicircular"),
-    "posiciones": (0.35, 0.425, 0.50, 0.575, 0.65),  # 5 alturas fijas
-    "profundidades": (0.16, 0.20, 0.24),             # 3 profundidades fijas
-    "anchos": (0.24, 0.28, 0.32, 0.36),              # 4 anchos fijos
-    "ancho": 0.30,                                   # ancho por defecto
+    "posiciones": (0.35, 0.425, 0.50, 0.575, 0.65),
+    "profundidades": (0.16, 0.20, 0.24),
+    "anchos": (0.24, 0.28, 0.32, 0.36),            
+    "ancho": 0.30,
 }
 
 __all__ = ["generate_tab_curve", "JigsawGridGeometry", "TABLA_BORDES_DISCRETOS"]
 
 
+
 def _calcular_bulb(prof: str, x_norm: float) -> float:
-    """Calcula el factor de desplazamiento perpendicular según el perfil del encastre."""
+    #Desplazamiento perpendicular normalizado segun el perfil del encastre
     if prof in ("circular", "semicircular"):
         return float(np.sqrt(max(0.0, 1.0 - x_norm ** 2)))
     elif prof in ("wide", "random"):
@@ -30,11 +33,12 @@ def _calcular_bulb(prof: str, x_norm: float) -> float:
         return float(np.cos(x_norm * np.pi / 2.0) ** 1.6)
 
 
+
 def generate_tab_curve(
     p_start: Tuple[float, float],
     p_end: Tuple[float, float],
-    tab_type: int,  # +1: Macho, -1: Hembra, 0: Plano
-    profile_type: str = "standard",  # 'standard', 'circular', 'semicircular', 'gaussiano', 'wide'
+    tab_type: int,
+    profile_type: str = "standard", 
     num_points: int = 60,
     tab_depth_ratio: float = 0.20,
     tab_width_ratio: float = 0.32,
@@ -68,7 +72,12 @@ def generate_tab_curve(
 
         if abs(dist_from_center) <= 1.0:
             x_norm = float(dist_from_center)
-            bulb = _calcular_bulb(profile_type, x_norm)
+            if profile_type == "circular":
+                bulb = np.sqrt(max(0.0, 1.0 - x_norm ** 2))
+            elif profile_type in ("wide", "random"):
+                bulb = np.cos(x_norm * np.pi / 2.0) ** 1.3
+            else:
+                bulb = np.cos(x_norm * np.pi / 2.0) ** 1.6
             offset = depth * bulb
         else:
             offset = 0.0
@@ -100,53 +109,49 @@ class JigsawGridGeometry:
         self.cols = cols
         self.img_h = image_h
         self.img_w = image_w
-        self.discrete = discrete
-
+ 
         self.tile_h = image_h // rows
         self.tile_w = image_w // cols
-
+        self.discrete = discrete
+ 
         rng = np.random.default_rng(seed)
-
-        # Encastres entre columnas (costuras verticales): (rows, cols - 1)
-        # +1: saliente hacia la derecha (+x), -1: entrante hacia la izquierda
+ 
         self.horiz_tabs = rng.choice([1, -1], size=(rows, cols - 1))
-
-        # Encastres entre filas (costuras horizontales): (rows - 1, cols)
-        # +1: saliente hacia abajo (+y), -1: entrante hacia arriba
+ 
         self.vert_tabs = rng.choice([1, -1], size=(rows - 1, cols))
-
+ 
         if discrete:
             perfiles = TABLA_BORDES_DISCRETOS["perfiles"]
             posiciones = TABLA_BORDES_DISCRETOS["posiciones"]
             profundidades = TABLA_BORDES_DISCRETOS["profundidades"]
-            anchos = TABLA_BORDES_DISCRETOS.get("anchos", (0.24, 0.28, 0.32, 0.36))
-
+            anchos = TABLA_BORDES_DISCRETOS["anchos"]
+ 
+            self.allowed_profiles = list(perfiles)
             self.horiz_profile_types = rng.choice(perfiles, size=(rows, cols - 1))
             self.vert_profile_types = rng.choice(perfiles, size=(rows - 1, cols))
-
+ 
             self.horiz_centers = rng.choice(posiciones, size=(rows, cols - 1))
             self.vert_centers = rng.choice(posiciones, size=(rows - 1, cols))
-
             self.horiz_depths = rng.choice(profundidades, size=(rows, cols - 1))
             self.vert_depths = rng.choice(profundidades, size=(rows - 1, cols))
-
             self.horiz_widths = rng.choice(anchos, size=(rows, cols - 1))
             self.vert_widths = rng.choice(anchos, size=(rows - 1, cols))
         else:
             self.allowed_profiles = profile_types if profile_types is not None else ["standard", "circular", "wide"]
             self.horiz_profile_types = rng.choice(self.allowed_profiles, size=(rows, cols - 1))
             self.vert_profile_types = rng.choice(self.allowed_profiles, size=(rows - 1, cols))
-
+ 
             self.horiz_centers = rng.uniform(0.40, 0.60, size=(rows, cols - 1))
             self.vert_centers = rng.uniform(0.40, 0.60, size=(rows - 1, cols))
             self.horiz_depths = rng.uniform(0.18, 0.22, size=(rows, cols - 1))
             self.vert_depths = rng.uniform(0.18, 0.22, size=(rows - 1, cols))
             self.horiz_widths = rng.uniform(0.28, 0.34, size=(rows, cols - 1))
             self.vert_widths = rng.uniform(0.28, 0.34, size=(rows - 1, cols))
-
-        self._seams_v = {}  # Costuras horizontales entre fila r y r+1
-        self._seams_h = {}  # Costuras verticales entre columna c y c+1
+ 
+        self._seams_v = {} 
+        self._seams_h = {}
         self._compute_canonical_seams(num_pts=60)
+
 
     def _compute_canonical_seams(self, num_pts: int = 60) -> None:
         """Calcula una única vez cada curva de unión interior compartida."""
@@ -157,15 +162,15 @@ class JigsawGridGeometry:
                 p1 = np.array([(c + 1) * self.tile_w, (r + 1) * self.tile_h], dtype=np.float32)
                 prof = str(self.vert_profile_types[r, c])
                 tab_dir = int(self.vert_tabs[r, c])
-
+ 
                 u = (p1 - p0) / float(self.tile_w)
                 n = np.array([0.0, 1.0], dtype=np.float32) if tab_dir == 1 else np.array([0.0, -1.0], dtype=np.float32)
-
+ 
                 length = float(self.tile_w)
                 depth = length * float(self.vert_depths[r, c])
                 width = length * float(self.vert_widths[r, c])
                 center = float(self.vert_centers[r, c]) * length
-
+ 
                 pts = []
                 for t in np.linspace(0.0, 1.0, num_pts):
                     s = t * length
@@ -177,7 +182,7 @@ class JigsawGridGeometry:
                         bulb = 0.0
                     pts.append(p0 + s * u + (depth * bulb) * n)
                 self._seams_v[(r, c)] = np.array(pts, dtype=np.float32)
-
+ 
         # 2. Costuras verticales: entre columna c y c+1
         for r in range(self.rows):
             for c in range(self.cols - 1):
@@ -185,15 +190,15 @@ class JigsawGridGeometry:
                 p1 = np.array([(c + 1) * self.tile_w, (r + 1) * self.tile_h], dtype=np.float32)
                 prof = str(self.horiz_profile_types[r, c])
                 tab_dir = int(self.horiz_tabs[r, c])
-
+ 
                 u = (p1 - p0) / float(self.tile_h)
                 n = np.array([1.0, 0.0], dtype=np.float32) if tab_dir == 1 else np.array([-1.0, 0.0], dtype=np.float32)
-
+ 
                 length = float(self.tile_h)
                 depth = length * float(self.horiz_depths[r, c])
                 width = length * float(self.horiz_widths[r, c])
                 center = float(self.horiz_centers[r, c]) * length
-
+ 
                 pts = []
                 for t in np.linspace(0.0, 1.0, num_pts):
                     s = t * length
@@ -228,22 +233,22 @@ class JigsawGridGeometry:
             curve_n = np.array([[x, 0.0] for x in np.linspace(c * self.tile_w, (c + 1) * self.tile_w, num_pts)], dtype=np.float32)
         else:
             curve_n = self._seams_v[(r - 1, c)].copy()
-
+ 
         if c == self.cols - 1:
             curve_e = np.array([[(c + 1) * self.tile_w, y] for y in np.linspace(r * self.tile_h, (r + 1) * self.tile_h, num_pts)], dtype=np.float32)
         else:
             curve_e = self._seams_h[(r, c)].copy()
-
+ 
         if r == self.rows - 1:
             curve_s = np.array([[x, (r + 1) * self.tile_h] for x in np.linspace((c + 1) * self.tile_w, c * self.tile_w, num_pts)], dtype=np.float32)
         else:
             curve_s = self._seams_v[(r, c)][::-1].copy()
-
+ 
         if c == 0:
             curve_w = np.array([[0.0, y] for y in np.linspace((r + 1) * self.tile_h, r * self.tile_h, num_pts)], dtype=np.float32)
         else:
             curve_w = self._seams_h[(r, c - 1)][::-1].copy()
-
+ 
         return {"NORTE": curve_n, "ESTE": curve_e, "SUR": curve_s, "OESTE": curve_w}
 
     def get_piece_polygon(self, r: int, c: int, num_pts_per_edge: int = 60) -> np.ndarray:

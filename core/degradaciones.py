@@ -8,10 +8,11 @@ __all__ = [
     "agregar_ruido_exponencial",
     "agregar_ruido_sal_y_pimienta",
     "componer_degradaciones",
-    "rotar_matiz",
-    "alterar_valor",
-    "VARIANTES_CROMATICAS",
-    "DegradacionCromaticaPorPieza",
+    "alterar_luminancia", 
+    "alterar_crominancia", 
+    "VARIANTES_NIVEL_2", 
+    "DegradacionPorPiezaNivel2", 
+    "sortear_variante_nivel2",
     "agregar_onda",
     "agregar_ondas",
     "agregar_producto_de_ondas",
@@ -97,74 +98,121 @@ def agregar_ruido_sal_y_pimienta(
 
 
 
-
-VARIANTES_CROMATICAS = ("matiz", "valor")
-
-
-def rotar_matiz(pieza, desplazamiento):
-    hsv = color.rgb2hsv(np.clip(pieza, 0.0, 1.0))
-    hsv[:, :, 0] = (hsv[:, :, 0] + desplazamiento) % 1.0
-    return np.clip(color.hsv2rgb(hsv), 0.0, 1.0)
-
-
-def alterar_valor(pieza, gamma=1.0, ganancia=1.0):
-    hsv = color.rgb2hsv(np.clip(pieza, 0.0, 1.0))
-    valor = np.power(np.clip(hsv[:, :, 2], 0.0, 1.0), 1.0 / max(gamma, 0.1))
-    hsv[:, :, 2] = np.clip(valor * ganancia, 0.0, 1.0)
-    return np.clip(color.hsv2rgb(hsv), 0.0, 1.0)
-
-
-class DegradacionCromaticaPorPieza:
-    def __init__(self, variante="matiz",
-                 rango_desplazamiento=(0.0, 1.0),
-                 rango_gamma=(0.50, 2.00),
-                 rango_ganancia=(0.60, 1.40)):
-        if variante not in VARIANTES_CROMATICAS:
+VARIANTES_NIVEL_2 = ("luminancia", "crominancia", "xor")
+ 
+ 
+def _a_ycbcr(pieza):
+    from skimage import color
+    return color.rgb2ycbcr(np.clip(pieza, 0.0, 1.0))
+ 
+ 
+def _a_rgb(ycbcr):
+    from skimage import color
+    return np.clip(color.ycbcr2rgb(ycbcr), 0.0, 1.0)
+ 
+ 
+def alterar_luminancia(pieza, gamma=1.0, contraste=1.0, brillo=0.0):
+    ycbcr = _a_ycbcr(pieza)
+    luminancia = (ycbcr[:, :, 0] - 16.0) / 219.0
+    luminancia = np.power(np.clip(luminancia, 0.0, 1.0), 1.0 / max(gamma, 0.1))
+    luminancia = contraste * (luminancia - 0.5) + 0.5 + brillo
+    ycbcr[:, :, 0] = np.clip(luminancia * 219.0 + 16.0, 16.0, 235.0)
+    return _a_rgb(ycbcr)
+ 
+ 
+def alterar_crominancia(pieza, ganancia_cb=1.0, ganancia_cr=1.0,
+                        desplazamiento_cb=0.0, desplazamiento_cr=0.0):
+    ycbcr = _a_ycbcr(pieza)
+    ycbcr[:, :, 1] = np.clip((ycbcr[:, :, 1] - 128.0) * ganancia_cb + 128.0 + desplazamiento_cb, 16.0, 240.0)
+    ycbcr[:, :, 2] = np.clip((ycbcr[:, :, 2] - 128.0) * ganancia_cr + 128.0 + desplazamiento_cr, 16.0, 240.0)
+    return _a_rgb(ycbcr)
+ 
+ 
+def sortear_variante_nivel2(semilla):
+    """
+    Sortea la variante a partir de la semilla del rompecabezas, con un generador
+    propio para no correr el stream aleatorio del resto de los niveles.
+    """
+    generador = np.random.default_rng([int(semilla), 20252])
+    return str(generador.choice(list(VARIANTES_NIVEL_2)))
+ 
+ 
+class DegradacionPorPiezaNivel2:
+    """
+    Se usa como `degradacion_por_pieza`: se la llama (pieza, indice, generador).
+ 
+    Los parametros se sortean sin correlacion con la posicion de la pieza: si
+    piezas vecinas compartieran transformacion, comparar brillos agruparia
+    piezas por su degradacion en vez de por su contenido.
+    """
+ 
+    def __init__(self, variante="xor", cantidad_piezas=None,
+                 rango_gamma=(0.55, 1.80),
+                 rango_contraste=(0.60, 1.45),
+                 rango_brillo=(-0.12, 0.12),
+                 rango_ganancia=(0.30, 2.00),
+                 rango_desplazamiento=(-45.0, 45.0)):
+        if variante not in VARIANTES_NIVEL_2:
             raise ValueError(f"variante invalida: {variante!r}. "
-                             f"Se espera una de {VARIANTES_CROMATICAS}")
+                             f"Se espera una de {VARIANTES_NIVEL_2}")
         self.variante = variante
-        self.rango_desplazamiento = rango_desplazamiento
+        self.cantidad_piezas = cantidad_piezas
         self.rango_gamma = rango_gamma
+        self.rango_contraste = rango_contraste
+        self.rango_brillo = rango_brillo
         self.rango_ganancia = rango_ganancia
+        self.rango_desplazamiento = rango_desplazamiento
+ 
         self.parametros_por_pieza = {}
-
+        self._asignacion = None
+ 
+ 
+    def _que_le_toca(self, indice, generador):
+        if self.variante != "xor":
+            return self.variante
+ 
+    
+        if self.cantidad_piezas:
+            if self._asignacion is None:
+                mitad = self.cantidad_piezas // 2
+                etiquetas = (["luminancia"] * mitad +
+                             ["crominancia"] * (self.cantidad_piezas - mitad))
+                generador.shuffle(etiquetas)
+                self._asignacion = etiquetas
+            return self._asignacion[int(indice) % len(self._asignacion)]
+ 
+        return "luminancia" if generador.random() < 0.5 else "crominancia"
+ 
+ 
     def __call__(self, pieza, indice, generador):
-        if self.variante == "matiz":
-            desplazamiento = float(generador.uniform(*self.rango_desplazamiento))
-            self.parametros_por_pieza[int(indice)] = {
-                "variante": "matiz",
-                "desplazamiento_h": round(desplazamiento, 3),
+        le_toca = self._que_le_toca(indice, generador)
+ 
+        if le_toca == "luminancia":
+            parametros = {
+                "gamma": float(generador.uniform(*self.rango_gamma)),
+                "contraste": float(generador.uniform(*self.rango_contraste)),
+                "brillo": float(generador.uniform(*self.rango_brillo)),
             }
-            return rotar_matiz(pieza, desplazamiento)
-
-        gamma = float(generador.uniform(*self.rango_gamma))
-        ganancia = float(generador.uniform(*self.rango_ganancia))
-        self.parametros_por_pieza[int(indice)] = {
-            "variante": "valor",
-            "gamma": round(gamma, 3),
-            "ganancia": round(ganancia, 3),
-        }
-        return alterar_valor(pieza, gamma, ganancia)
-
+            resultado = alterar_luminancia(pieza, **parametros)
+        else:
+            parametros = {
+                "ganancia_cb": float(generador.uniform(*self.rango_ganancia)),
+                "ganancia_cr": float(generador.uniform(*self.rango_ganancia)),
+                "desplazamiento_cb": float(generador.uniform(*self.rango_desplazamiento)),
+                "desplazamiento_cr": float(generador.uniform(*self.rango_desplazamiento)),
+            }
+            resultado = alterar_crominancia(pieza, **parametros)
+ 
+        registro = {"altera": le_toca}
+        registro.update({k: round(v, 3) for k, v in parametros.items()})
+        self.parametros_por_pieza[int(indice)] = registro
+        return resultado
+ 
     def reiniciar(self):
         self.parametros_por_pieza = {}
+        self._asignacion = None
 
-    def resumen(self):
-        """Rango efectivo de los parametros sorteados, para verificar el sorteo."""
-        if not self.parametros_por_pieza:
-            return {}
-
-        if self.variante == "matiz":
-            valores = [r["desplazamiento_h"] for r in self.parametros_por_pieza.values()]
-            return {"variante": "matiz", "desplazamiento_h": (min(valores), max(valores))}
-
-        gammas = [r["gamma"] for r in self.parametros_por_pieza.values()]
-        ganancias = [r["ganancia"] for r in self.parametros_por_pieza.values()]
-        return {"variante": "valor",
-                "gamma": (min(gammas), max(gammas)),
-                "ganancia": (min(ganancias), max(ganancias))}
-
-FRECUENCIAS_DISPONIBLES = (8, 12, 16, 20, 24, 28)
+FRECUENCIAS_DISPONIBLES = (24,  40,  56, 100)
 
 
 def agregar_onda(imagen, desplazamiento_fila, desplazamiento_columna,
@@ -208,18 +256,15 @@ def agregar_producto_de_ondas(imagen, primera, segunda, amplitud=0.18):
 
 
 
-TIPOS_DE_TRAMA = ("ortogonales", "rejilla", "diagonales", "oblicuas",
+TIPOS_DE_TRAMA = ("ortogonales", "diagonales", "oblicuas",
                   "triple", "doble_frecuencia", "cuadruple")
 
 
 def _sortear_frecuencia(generador, frecuencias):
     return int(generador.choice(frecuencias))
 
-
 def _componentes_de_trama(tipo, generador, frecuencias, amplitud):
-   
     sortear = lambda: _sortear_frecuencia(generador, frecuencias)
-
     
     diagonal = lambda f: max(8, f // 2 * 2)
     fase = lambda: float(generador.uniform(0, 2 * np.pi))
@@ -227,25 +272,20 @@ def _componentes_de_trama(tipo, generador, frecuencias, amplitud):
 
     if tipo == "ortogonales":
         f1, f2 = sortear(), sortear()
-        return [(0, f1, amplitud, fase()), (f2, 0, amplitud, fase())], False, \
+        return [(0, f1, amplitud, fase()), (f2, 0, amplitud, fase())], \
                {"picos": [(0, f1), (f2, 0)]}
 
-    if tipo == "rejilla":
-        f1, f2 = sortear(), sortear()
-        #Producto: los picos NO estan en (0,f1) ni (f2,0), sino en (f2, +-f1)
-        return [(0, f1), (f2, 0)], True, \
-               {"picos": [(f2, f1), (f2, -f1)]}
 
     if tipo == "diagonales":
         f = diagonal(sortear())
-        return [(f, f, amplitud, fase()), (f, -f, amplitud, fase())], False, \
+        return [(f, f, amplitud, fase()), (f, -f, amplitud, fase())], \
                {"picos": [(f, f), (f, -f)]}
 
     if tipo == "oblicuas":
         f1, f2 = sortear(), sortear()
         oblicuo = max(8, f1 // 2)
         return [(oblicuo, f2, amplitud, fase()),
-                (f2, signo() * oblicuo, amplitud, fase())], False, \
+                (f2, signo() * oblicuo, amplitud, fase())], \
                {"picos": [(oblicuo, f2), (f2, oblicuo)]}
 
     if tipo == "triple":
@@ -253,11 +293,10 @@ def _componentes_de_trama(tipo, generador, frecuencias, amplitud):
         parcial = amplitud * 0.8
         d = diagonal(f3)
         return [(0, f1, parcial, fase()), (f2, 0, parcial, fase()),
-                (d, d, parcial, fase())], False, \
+                (d, d, parcial, fase())], \
                {"picos": [(0, f1), (f2, 0), (d, d)]}
 
     if tipo == "doble_frecuencia":
-        
         candidatas = sorted({sortear(), sortear(), sortear()})
         f1, f2 = candidatas[0], candidatas[-1]
         if f1 == f2:
@@ -269,23 +308,23 @@ def _componentes_de_trama(tipo, generador, frecuencias, amplitud):
         else:
             componentes = [(f1, 0, amplitud, fase()), (f2, 0, amplitud, fase())]
             picos = [(f1, 0), (f2, 0)]
-        return componentes, False, {"picos": picos}
+        return componentes, {"picos": picos}
 
     if tipo == "cuadruple":
         f1, f2 = sortear(), sortear()
         d = diagonal(min(f1, f2))
         parcial = amplitud * 0.65
         return [(0, f1, parcial, fase()), (f2, 0, parcial, fase()),
-                (d, d, parcial, fase()), (d, -d, parcial, fase())], False, \
+                (d, d, parcial, fase()), (d, -d, parcial, fase())], \
                {"picos": [(0, f1), (f2, 0), (d, d), (d, -d)]}
 
     raise ValueError(f"tipo de trama invalido: {tipo!r}")
 
 
 class TramaMixtaPorPieza:
-
+    # Mantenemos amplitudes altas para destruir visualmente la imagen
     def __init__(self, tipos=TIPOS_DE_TRAMA, frecuencias=FRECUENCIAS_DISPONIBLES,
-                 amplitud_minima=0.12, amplitud_maxima=0.18):
+                 amplitud_minima=0.25, amplitud_maxima=0.35):
         self.tipos = tuple(tipos)
         self.frecuencias = tuple(frecuencias)
         self.amplitud_minima = amplitud_minima
@@ -296,14 +335,12 @@ class TramaMixtaPorPieza:
         tipo = str(generador.choice(self.tipos))
         amplitud = float(generador.uniform(self.amplitud_minima, self.amplitud_maxima))
 
-        componentes, es_producto, info = _componentes_de_trama(
+        # Ya no recibimos "es_producto" porque todas son sumas puras
+        componentes, info = _componentes_de_trama(
             tipo, generador, self.frecuencias, amplitud)
 
-        if es_producto:
-            resultado = agregar_producto_de_ondas(pieza, componentes[0],
-                                                  componentes[1], amplitud * 2.0)
-        else:
-            resultado = agregar_ondas(pieza, componentes)
+        # Usamos siempre agregar_ondas (suma pura)
+        resultado = agregar_ondas(pieza, componentes)
 
         self.parametros_por_pieza[int(indice)] = {
             "tipo": tipo,
@@ -316,7 +353,6 @@ class TramaMixtaPorPieza:
         self.parametros_por_pieza = {}
 
     def resumen(self):
-      
         conteo = {}
         for registro in self.parametros_por_pieza.values():
             conteo[registro["tipo"]] = conteo.get(registro["tipo"], 0) + 1

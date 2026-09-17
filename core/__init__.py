@@ -15,10 +15,11 @@ from .degradaciones import (
     agregar_ruido_uniforme,
     agregar_ruido_rayleigh,
     agregar_ruido_sal_y_pimienta,
-    rotar_matiz,
-    alterar_valor,
-    VARIANTES_CROMATICAS,
-    DegradacionCromaticaPorPieza,
+    alterar_luminancia, 
+    alterar_crominancia, 
+    VARIANTES_NIVEL_2, 
+    DegradacionPorPiezaNivel2, 
+    sortear_variante_nivel2, 
     agregar_onda,
     agregar_ondas,
     agregar_producto_de_ondas,
@@ -29,7 +30,6 @@ from .degradaciones import (
 from .geometria_jigsaw import (
     generate_tab_curve,
     JigsawGridGeometry,
-    TABLA_BORDES_DISCRETOS,
 )
 from .detector_forma import (
     binarize_piece,
@@ -43,7 +43,7 @@ from .detector_forma import (
     analyze_piece_shape,
     compute_edge_correlation,
     compute_jigsaw_shape_compatibility,
-    calcular_mse_color_bordes,
+    compatibilidad_forma,
 )
 from .analizador_rotacion import (
     aplicar_filtro_rayas_horizontales,
@@ -83,9 +83,6 @@ from .crear_rompecabezas import (
     armar_caso_rompecabezas,
     crear_rompecabezas_nivel,
     crear_dataset_desafio_30,
-    generar_desafio_30,
-    generar_caso_desafio_30,
-    iterar_desafio_30,
 )
 
 __all__ = [
@@ -97,11 +94,11 @@ __all__ = [
     "agregar_onda", "agregar_ondas", "agregar_producto_de_ondas", "TIPOS_DE_TRAMA", "TramaMixtaPorPieza",
     "componer_degradaciones",
     # Jigsaw
-    "generate_tab_curve", "JigsawGridGeometry", "TABLA_BORDES_DISCRETOS",
+    "generate_tab_curve", "JigsawGridGeometry",
     # Forma
     "binarize_piece", "extract_external_contour", "detect_jigsaw_corners", "detect_corners_and_split_sides",
     "segmentar_lados_pieza", "segmentar_borde_en_4", "pasar_borde_a_1d", "extraer_perfil_1d", "analyze_piece_shape",
-    "compute_edge_correlation", "compute_jigsaw_shape_compatibility", "calcular_mse_color_bordes",
+    "compute_edge_correlation", "compute_jigsaw_shape_compatibility", "compatibilidad_forma",
     # Rotación
     "aplicar_filtro_rayas_horizontales", "estimar_orientacion_fourier", "estimar_orientacion_sobel", "enderezar_pieza", "rotar_imagen_ortogonal",
     # Bordes y afinidades
@@ -112,5 +109,5 @@ __all__ = [
     # Reconstructor
     "CELDA_VACIA", "ReconstructorRompecabezas", "reconstruir_desde_afinidades", "reconstruir_rompecabezas",
     # Generador
-    "Rompecabezas", "cortar_imagen_en_piezas", "barajar_piezas", "pegar_piezas", "armar_caso_rompecabezas", "crear_rompecabezas_nivel", "crear_dataset_desafio_30", "generar_desafio_30", "generar_caso_desafio_30", "iterar_desafio_30",
+    "Rompecabezas", "cortar_imagen_en_piezas", "barajar_piezas", "pegar_piezas", "armar_caso_rompecabezas", "crear_rompecabezas_nivel", "crear_dataset_desafio_30",
 ]
