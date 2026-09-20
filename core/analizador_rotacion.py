@@ -8,9 +8,9 @@ Permite:
 from typing import Tuple, Optional
 import numpy as np
 import cv2
+from core.geometria_jigsaw import MINIMO_CONTENIDO_MASCARA_FLOAT, MINIMO_CONTENIDO_MASCARA_INT
 
 __all__ = [
-    "aplicar_filtro_rayas_horizontales",
     "estimar_orientacion_fourier",
     "estimar_orientacion_sobel",
     "enderezar_pieza",
@@ -19,31 +19,7 @@ __all__ = [
 
 _MSG_EJERCICIO = "Hola, chismosin (again), fijate el contrato."
 
-def aplicar_filtro_rayas_horizontales(
-    imagen: np.ndarray,
-    periodo: int = 8,
-    amplitud: float = 0.38,
-) -> np.ndarray:
-    """
-    Aplica una modulación armónica periódica horizontal con pico espectral dominante.
-    Garantiza que en el dominio de Fourier 2D el componente de las rayas sea el
-    pico más brillante e intenso globalmente fuera de la componente continua (DC).
-    """
-    alto, ancho = imagen.shape[:2]
-    y_coords = np.arange(alto, dtype=np.float32)[:, None]
 
-    patron_1d = (amplitud * np.cos(2.0 * np.pi * y_coords / float(periodo))).astype(np.float32)
-    patron_2d = np.repeat(patron_1d, ancho, axis=1)
-
-    if imagen.ndim == 3:
-        patron_2d = patron_2d[:, :, None]
-
-    es_float = issubclass(imagen.dtype.type, np.floating)
-    img_f = imagen if es_float else imagen.astype(np.float32) / 255.0
-    modulada = np.clip(img_f + patron_2d, 0.0, 1.0)
-    if not es_float:
-        modulada = (modulada * 255.0).astype(imagen.dtype)
-    return modulada
 
 
 def estimar_orientacion_fourier(
@@ -86,7 +62,6 @@ def enderezar_pieza(
     Returns:
         (pieza_enderezada, mascara_enderezada)
     """
-    alto, ancho = imagen.shape[:2]
     pad_h = padding
     pad_w = padding
 
@@ -108,15 +83,15 @@ def enderezar_pieza(
             padded,
             matriz_rot,
             (pw, ph),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
+            flags=cv2.INTER_CUBIC,
+            borderMode=cv2.BORDER_REPLICATE,
             borderValue=0,
         )
 
     if issubclass(rectificada.dtype.type, np.floating):
-        mask = (np.max(rectificada, axis=2) > 0.01).astype(np.uint8) * 255 if rectificada.ndim == 3 else (rectificada > 0.01).astype(np.uint8) * 255
+        mask = (np.max(rectificada, axis=2) >= MINIMO_CONTENIDO_MASCARA_FLOAT).astype(np.uint8) * 255 if rectificada.ndim == 3 else (rectificada >= MINIMO_CONTENIDO_MASCARA_FLOAT).astype(np.uint8) * 255
     else:
-        mask = (np.max(rectificada, axis=2) > 5).astype(np.uint8) * 255 if rectificada.ndim == 3 else (rectificada > 5).astype(np.uint8) * 255
+        mask = (np.max(rectificada, axis=2) >= MINIMO_CONTENIDO_MASCARA_INT).astype(np.uint8) * 255 if rectificada.ndim == 3 else (rectificada > MINIMO_CONTENIDO_MASCARA_INT).astype(np.uint8) * 255
 
     return rectificada, mask
 

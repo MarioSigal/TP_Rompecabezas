@@ -22,13 +22,11 @@ from .degradaciones import (
     sortear_variante_nivel2, 
     agregar_onda,
     agregar_ondas,
-    agregar_producto_de_ondas,
     TIPOS_DE_TRAMA,
     TramaMixtaPorPieza,
     componer_degradaciones,
 )
 from .geometria_jigsaw import (
-    generate_tab_curve,
     JigsawGridGeometry,
 )
 from .detector_forma import (
@@ -46,7 +44,6 @@ from .detector_forma import (
     compatibilidad_forma,
 )
 from .analizador_rotacion import (
-    aplicar_filtro_rayas_horizontales,
     estimar_orientacion_fourier,
     estimar_orientacion_sobel,
     enderezar_pieza,
@@ -100,7 +97,7 @@ __all__ = [
     "segmentar_lados_pieza", "segmentar_borde_en_4", "pasar_borde_a_1d", "extraer_perfil_1d", "analyze_piece_shape",
     "compute_edge_correlation", "compute_jigsaw_shape_compatibility", "compatibilidad_forma",
     # Rotación
-    "aplicar_filtro_rayas_horizontales", "estimar_orientacion_fourier", "estimar_orientacion_sobel", "enderezar_pieza", "rotar_imagen_ortogonal",
+    "estimar_orientacion_fourier", "estimar_orientacion_sobel", "enderezar_pieza", "rotar_imagen_ortogonal",
     # Bordes y afinidades
     "LADOS", "BORDES_ENFRENTADOS", "extraer_banda_borde", "compatibilidad_baseline", "construir_matrices_afinidad",
     # Métricas

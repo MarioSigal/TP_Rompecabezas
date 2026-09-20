@@ -42,7 +42,7 @@ def mostrar_piezas_desordenadas(
             axes[i].set_title(f"Pieza #{i}", fontsize=10)
         axes[i].axis("off")
 
-    plt.suptitle(f"{titulo} (Nivel {rompecabezas.nivel})", fontsize=14, y=1.02)
+    plt.suptitle(f"{titulo} (Nivel {rompecabezas.metadatos.get("nivel","-")})", fontsize=14, y=1.02)
     plt.tight_layout()
     plt.show()
 

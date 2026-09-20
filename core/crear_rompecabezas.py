@@ -18,9 +18,10 @@ try:
     DegradacionPorPiezaNivel2,
     sortear_variante_nivel2,
     TramaMixtaPorPieza,
+    DegradacionPorPiezaRotacion
     )
     from .geometria_jigsaw import JigsawGridGeometry
-    from .analizador_rotacion import aplicar_filtro_rayas_horizontales, rotar_imagen_ortogonal, enderezar_pieza
+    from .analizador_rotacion import rotar_imagen_ortogonal, enderezar_pieza
 except ImportError:
     from preparacion_imagenes import asegurar_rgb_float
     from degradaciones import (
@@ -45,6 +46,7 @@ __all__ = [
     "armar_caso_rompecabezas",
     "crear_rompecabezas_nivel",
     "crear_dataset_desafio_30",
+    "pre_proceso_imagen_para_rompecabezas"
 ]
 
 class Rompecabezas:
@@ -56,7 +58,7 @@ class Rompecabezas:
         cantidad_columnas: int,
         posicion_real: Dict[int, Tuple[int, int]],
         rotacion_real: Optional[Dict[int, float]] = None,
-        nivel: int = 1,
+        tiene_ranuras: bool = False,
         imagen_base: Optional[np.ndarray] = None,
         imagen_degradada: Optional[np.ndarray] = None,
         metadatos: Optional[Dict[str, Any]] = None,
@@ -66,7 +68,7 @@ class Rompecabezas:
         self.cantidad_columnas = cantidad_columnas
         self.posicion_real = posicion_real
         self.rotacion_real = rotacion_real or {p: 0.0 for p in range(len(piezas))}
-        self.nivel = nivel
+        self.tiene_ranuras = tiene_ranuras
         self.imagen_base = imagen_base
         self.imagen_degradada = imagen_degradada
         self.metadatos = metadatos or {}
@@ -133,7 +135,7 @@ class Rompecabezas:
         lienzo = np.zeros((h, w, canales), dtype=np.float64)
         grilla_arr = np.asarray(grilla_propuesta)
 
-        es_forma = (self.nivel in (4, 5, 6)) or any(
+        es_forma = (self.tiene_ranuras) or any(
             p.shape[0] > tile_h or p.shape[1] > tile_w for p in lista_piezas[:min(len(lista_piezas), 3)]
         )
 
@@ -265,7 +267,7 @@ def pegar_piezas(piezas: List[np.ndarray], grilla: np.ndarray) -> np.ndarray:
             cantidad_filas=filas,
             cantidad_columnas=columnas,
             posicion_real={},
-            nivel=4,
+            tiene_ranuras=True,
             imagen_base=None,
             imagen_degradada=None,
         )
@@ -283,6 +285,18 @@ def pegar_piezas(piezas: List[np.ndarray], grilla: np.ndarray) -> np.ndarray:
 
     return np.clip(lienzo.squeeze(), 0.0, 1.0)
 
+def cortar_ranuras_en_piezas(imagen:np.ndarray, jigsaw:JigsawGridGeometry, padding = 30):
+    piezas_ordenadas = []
+    piezas_mascaras = []
+    for r in range(jigsaw.filas):
+        for c in range(jigsaw.columnas):
+            pieza_img, mascara, _ = jigsaw.extract_piece_image(imagen, r, c, padding=padding)
+            # la funcion devuelve mascara numerica, pero queremos una mascara booleana
+            mascara = mascara == 255
+            piezas_ordenadas.append(pieza_img)
+            piezas_mascaras.append(mascara)
+
+    return piezas_ordenadas, piezas_mascaras
 
 def armar_caso_rompecabezas(
     imagen_base: np.ndarray,
@@ -291,35 +305,65 @@ def armar_caso_rompecabezas(
     degradacion_global: Optional[Callable[[np.ndarray, np.random.Generator], np.ndarray]] = None,
     degradacion_por_pieza: Optional[Callable[[np.ndarray, int, np.random.Generator], np.ndarray]] = None,
     semilla: int = 42,
-    nivel: int = 1,
+    tiene_ranuras: bool = False,
     metadatos_adicionales: Optional[Dict[str, Any]] = None,
+    barajar: Optional[bool] = True
 ) -> Rompecabezas:
     """Generador base para rompecabezas con hooks de degradación."""
+
     rng = np.random.default_rng(semilla)
-    img_limpia = asegurar_rgb_float(imagen_base)
-    img_ajustada = garantizar_dimensiones_para_divisibilidad(img_limpia, cantidad_filas, cantidad_columnas)
+    img_ajustada = pre_proceso_imagen_para_rompecabezas(imagen_base, cantidad_filas, cantidad_columnas)
+    altura, ancho, canales = img_ajustada.shape
 
     if degradacion_global is not None:
         img_degradada = degradacion_global(img_ajustada, rng)
     else:
         img_degradada = img_ajustada.copy()
 
-    piezas_ordenadas = cortar_imagen_en_piezas(img_degradada, cantidad_filas, cantidad_columnas)
-
+    # Cortamos las piezas con o sin ranura
+    # Si tienen ranura, ya tiene mascara
+    if not tiene_ranuras:
+        piezas_ordenadas = cortar_imagen_en_piezas(img_degradada, cantidad_filas, cantidad_columnas)
+    else:
+        jigsaw = JigsawGridGeometry(cantidad_filas, cantidad_columnas, altura, ancho, seed=semilla, discrete=True)
+        piezas_ordenadas, piezas_mascaras = cortar_ranuras_en_piezas(img_degradada, jigsaw)
+    
     if degradacion_por_pieza is not None:
-        piezas_ordenadas = [
-            degradacion_por_pieza(p, idx, rng) for idx, p in enumerate(piezas_ordenadas)
-        ]
+
+        if not isinstance(degradacion_por_pieza, list):
+            degradacion_por_pieza = [degradacion_por_pieza]
+
+        for degradacion in degradacion_por_pieza: 
+            piezas_degradadas = []
+            nuevas_mascaras = []
+            for idx, pieza in enumerate(piezas_ordenadas):
+                if piezas_mascaras:
+                    mascara = piezas_mascaras[idx]
+                    pieza_degradada, nueva_mascara = degradacion(pieza, idx, rng, mascara)
+                else:
+                    pieza_degradada, nueva_mascara = degradacion(pieza, idx, rng)
+
+                piezas_degradadas.append(pieza_degradada)
+                nuevas_mascaras.append(nueva_mascara)
+
+            piezas_ordenadas = piezas_degradadas
+            piezas_mascaras = nuevas_mascaras
+
         grilla_ord = np.arange(cantidad_filas * cantidad_columnas).reshape(cantidad_filas, cantidad_columnas)
         img_degradada = pegar_piezas(piezas_ordenadas, grilla_ord)
 
-    piezas_barajadas, posicion_real = barajar_piezas(piezas_ordenadas, cantidad_columnas, rng)
+    if barajar:
+        piezas_barajadas, posicion_real = barajar_piezas(piezas_ordenadas, cantidad_columnas, rng)
+    else:
+        # devuelve las posiciones identicas [(0,0), (0,1), ...
+        piezas_barajadas = piezas_ordenadas
+        posicion_real = [np.unravel_index(idx, (cantidad_filas, cantidad_columnas)) for idx in range(len(piezas_ordenadas))]
 
     metadatos = {
         "semilla": semilla,
         "filas": cantidad_filas,
         "columnas": cantidad_columnas,
-        "nivel": nivel,
+        "barajar": barajar
     }
     if metadatos_adicionales:
         metadatos.update(metadatos_adicionales)
@@ -329,7 +373,7 @@ def armar_caso_rompecabezas(
         cantidad_filas=cantidad_filas,
         cantidad_columnas=cantidad_columnas,
         posicion_real=posicion_real,
-        nivel=nivel,
+        tiene_ranuras=tiene_ranuras,
         imagen_base=img_ajustada,
         imagen_degradada=img_degradada,
         metadatos=metadatos,
@@ -435,6 +479,10 @@ VARIANTES_NIVEL_1 = {
     },
 }
 
+def pre_proceso_imagen_para_rompecabezas(imagen_base, filas, columnas):
+    img_limpia = asegurar_rgb_float(imagen_base)
+    img_ajustada = garantizar_dimensiones_para_divisibilidad(img_limpia, filas, columnas)  
+    return img_ajustada
 
 def crear_rompecabezas_nivel(
     imagen_base: np.ndarray,
@@ -446,8 +494,7 @@ def crear_rompecabezas_nivel(
 ) -> Rompecabezas:
 
     rng = np.random.default_rng(semilla)
-    img_limpia = asegurar_rgb_float(imagen_base)
-    img_ajustada = garantizar_dimensiones_para_divisibilidad(img_limpia, filas, columnas)
+    img_ajustada = pre_proceso_imagen_para_rompecabezas(imagen_base, filas, columnas)
 
     if nivel == 1:
         clave_variante = str(kwargs.get("variante", "A")).upper()
@@ -467,6 +514,7 @@ def crear_rompecabezas_nivel(
             metadatos_adicionales={
                 "variante": clave_variante,
                 "nombre_ruido": info_variante["nombre"],
+                "nivel": 1
             },
         )
 
@@ -486,8 +534,8 @@ def crear_rompecabezas_nivel(
             cantidad_columnas=columnas,
             degradacion_por_pieza=degradador_l2,
             semilla=semilla,
-            nivel=2,
-            metadatos_adicionales={"tipo_ruido": "fotometrico_por_pieza"},
+            metadatos_adicionales={"tipo_ruido": "fotometrico_por_pieza",
+                                   "nivel": 2},
         )
 
     elif nivel == 3:
@@ -500,95 +548,42 @@ def crear_rompecabezas_nivel(
             degradacion_por_pieza=degradador_l3,
             semilla=semilla,
             nivel=3,
-            metadatos_adicionales={"tipo_ruido": "trama_periodica_por_pieza"},
+            metadatos_adicionales={"tipo_ruido": "trama_periodica_por_pieza",
+                                   "nivel": 3},
         )
 
     elif nivel == 4:
-        h, w = img_ajustada.shape[:2]
-        usar_discreto = kwargs.get("discrete", True)
-        jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla, discrete=usar_discreto)
 
-        piezas_ordenadas = []
-        for r in range(filas):
-            for c in range(columnas):
-                pieza_img, _, _ = jigsaw.extract_piece_image(img_ajustada, r, c, padding=kwargs.get("padding", 30))
-                piezas_ordenadas.append(pieza_img)
-
-        piezas_barajadas, posicion_real = barajar_piezas(piezas_ordenadas, columnas, rng)
-
-        return Rompecabezas(
-            piezas=piezas_barajadas,
-            cantidad_filas=filas,
-            cantidad_columnas=columnas,
-            posicion_real=posicion_real,
-            nivel=4,
-            imagen_base=img_ajustada,
-            imagen_degradada=img_ajustada.copy(),
-            metadatos={"semilla": semilla, "filas": filas, "columnas": columnas, "nivel": 4, "tipo": "jigsaw"},
-        )
+        return armar_caso_rompecabezas(
+                    imagen_base=img_ajustada,
+                    cantidad_filas=filas,
+                    cantidad_columnas=columnas,
+                    semilla=semilla,
+                    tiene_ranuras=True,
+                    metadatos_adicionales={
+                        "nivel": 4
+                    }
+                )
 
     elif nivel == 5:
         
-        periodo_rayas = kwargs.get("periodo_rayas", 8)
         amplitud_rayas = kwargs.get("amplitud_rayas", 0.10)
-        img_rayada = aplicar_filtro_rayas_horizontales(img_ajustada, periodo=periodo_rayas, amplitud=amplitud_rayas)
+        #TODO: CHEQUEAR ESTO
+        degradador_rayas = lambda imagen, generador: imagen
+        degradador_rotar = DegradacionPorPiezaRotacion()
 
-        h, w = img_ajustada.shape[:2]
-        usar_discreto = kwargs.get("discrete", True)
-        jigsaw = JigsawGridGeometry(filas, columnas, h, w, seed=semilla, discrete=usar_discreto)
-
-        piezas_cortadas = []
-        for r in range(filas):
-            for c in range(columnas):
-                pieza_img, _, _ = jigsaw.extract_piece_image(img_rayada, r, c, padding=kwargs.get("padding", 30))
-                piezas_cortadas.append(pieza_img)
-
-
-        permitir_inclinacion_leve = kwargs.get("inclinacion_leve", True)
-
-        piezas_rotadas = []
-        angulos_reales = {}
-
-        for idx, p in enumerate(piezas_cortadas):
-            if permitir_inclinacion_leve:
-                jitter = float(rng.uniform(5.0, 60.0))
-                p_rot, _ = enderezar_pieza(p, angulo_grados=jitter, padding=0)
-            else:
-                jitter = 0.0
-                p_rot = p.copy()
-
-            piezas_rotadas.append(p_rot)
-            angulos_reales[idx] = jitter
-
-        total_piezas = len(piezas_rotadas)
-        permutacion = rng.permutation(total_piezas)
-        piezas_barajadas = [piezas_rotadas[i] for i in permutacion]
-
-        posicion_real = {}
-        rotacion_real = {}
-        for id_nuevo, id_orig in enumerate(permutacion):
-            posicion_real[id_nuevo] = (int(id_orig) // columnas, int(id_orig) % columnas)
-            rotacion_real[id_nuevo] = angulos_reales[int(id_orig)]
-
-        return Rompecabezas(
-            piezas=piezas_barajadas,
+        return armar_caso_rompecabezas(
+            imagen_base=img_ajustada,
             cantidad_filas=filas,
             cantidad_columnas=columnas,
-            posicion_real=posicion_real,
-            rotacion_real=rotacion_real,
-            nivel=5,
-            imagen_base=img_ajustada,
-            imagen_degradada=img_rayada,
-            metadatos={
-                "rotacion_real": rotacion_real,
-                "semilla": semilla,
-                "filas": filas,
-                "columnas": columnas,
+            semilla=semilla,
+            tiene_ranuras=True,
+            degradacion_global= degradador_rayas,
+            degradacion_por_pieza=degradador_rotar,
+            metadatos_adicionales={
                 "nivel": 5,
-                "tipo": "jigsaw_rotado",
-                "periodo_rayas": periodo_rayas,
-                "inclinacion_leve": permitir_inclinacion_leve,
-            },
+                "degradador": degradador_rotar
+            }
         )
 
   

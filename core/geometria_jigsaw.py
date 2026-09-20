@@ -8,84 +8,19 @@ import numpy as np
 import cv2
 
 
+MINIMO_CONTENIDO_MASCARA_FLOAT = 0.015
+MINIMO_CONTENIDO_MASCARA_INT = 5 
+
 #Tabla finita de generacion de bordes
 TABLA_BORDES_DISCRETOS = {
-    "perfiles": ("gaussiano", "semicircular"),
+    "perfiles": ["gaussian", "semicircular"],
     "posiciones": (0.35, 0.425, 0.50, 0.575, 0.65),
     "profundidades": (0.16, 0.20, 0.24),
     "anchos": (0.24, 0.28, 0.32, 0.36),            
     "ancho": 0.30,
 }
 
-__all__ = ["generate_tab_curve", "JigsawGridGeometry", "TABLA_BORDES_DISCRETOS"]
-
-
-
-def _calcular_bulb(prof: str, x_norm: float) -> float:
-    #Desplazamiento perpendicular normalizado segun el perfil del encastre
-    if prof in ("circular", "semicircular"):
-        return float(np.sqrt(max(0.0, 1.0 - x_norm ** 2)))
-    elif prof in ("wide", "random"):
-        return float(np.cos(x_norm * np.pi / 2.0) ** 1.3)
-    elif prof in ("gaussiano", "gaussian"):
-        return float(np.exp(-2.5 * (x_norm ** 2)))
-    else:
-        return float(np.cos(x_norm * np.pi / 2.0) ** 1.6)
-
-
-
-def generate_tab_curve(
-    p_start: Tuple[float, float],
-    p_end: Tuple[float, float],
-    tab_type: int,
-    profile_type: str = "standard", 
-    num_points: int = 60,
-    tab_depth_ratio: float = 0.20,
-    tab_width_ratio: float = 0.32,
-) -> np.ndarray:
-    """
-    Genera los puntos (x, y) de la curva de un borde con encastre analítico realista.
-    """
-    p0 = np.array(p_start, dtype=np.float32)
-    p1 = np.array(p_end, dtype=np.float32)
-
-    vec = p1 - p0
-    length = float(np.linalg.norm(vec))
-    if length == 0 or tab_type == 0:
-        t = np.linspace(0, 1, num_points)[:, None]
-        return p0 + t * vec
-
-    u = vec / length  # Vector unitario tangente
-    # Vector normal unitario (90° horario del vector tangente)
-    n = np.array([u[1], -u[0]], dtype=np.float32)
-
-    depth = length * tab_depth_ratio * float(tab_type)
-    width = length * tab_width_ratio
-    center = 0.5 * length
-
-    t_vals = np.linspace(0, 1, num_points)
-    curve_points = []
-
-    for t in t_vals:
-        s = t * length
-        dist_from_center = (s - center) / (width / 2.0)
-
-        if abs(dist_from_center) <= 1.0:
-            x_norm = float(dist_from_center)
-            if profile_type == "circular":
-                bulb = np.sqrt(max(0.0, 1.0 - x_norm ** 2))
-            elif profile_type in ("wide", "random"):
-                bulb = np.cos(x_norm * np.pi / 2.0) ** 1.3
-            else:
-                bulb = np.cos(x_norm * np.pi / 2.0) ** 1.6
-            offset = depth * bulb
-        else:
-            offset = 0.0
-
-        pt = p0 + s * u + offset * n
-        curve_points.append(pt)
-
-    return np.array(curve_points, dtype=np.float32)
+__all__ = ["JigsawGridGeometry", "TABLA_BORDES_DISCRETOS"]
 
 
 class JigsawGridGeometry:
@@ -97,170 +32,330 @@ class JigsawGridGeometry:
 
     def __init__(
         self,
-        rows: int,
-        cols: int,
-        image_h: int,
-        image_w: int,
+        filas: int,
+        columnas: int,
+        altura_imagen: int,
+        ancho_imagen: int,
         seed: Optional[int] = 42,
-        profile_types: Optional[List[str]] = None,
+        profile_types: Optional[List[str]] = ["gaussian", "semicircular", "ancha"],
         discrete: bool = False,
     ):
-        self.rows = rows
-        self.cols = cols
-        self.img_h = image_h
-        self.img_w = image_w
+        self.filas = filas
+        self.columnas = columnas
+        self.altura_imagen = altura_imagen
+        self.ancho_imagen = ancho_imagen
  
-        self.tile_h = image_h // rows
-        self.tile_w = image_w // cols
-        self.discrete = discrete
+        self.altura_pieza = altura_imagen // filas
+        self.ancho_pieza = ancho_imagen // columnas
+        self.utilizar_muecas_pre_definidas = discrete
  
         rng = np.random.default_rng(seed)
+
+        # Si es -1, la pieza del indice es la 'hembra' en la muesca del lado derecho
+        # Si es 1, la pieza del indice es la 'macho' en la muesca del lado derecho
+        self.direccion_muesca_horizontal = rng.choice([1, -1], size=(filas, columnas - 1))
+
+        # Si es -1, la pieza del indice es la 'hembra' en la muesca del lado inferior
+        # Si es 1, la pieza del indice es la 'macho' en la muesca del lado inferior
+        self.direccion_muesca_vertical = rng.choice([1, -1], size=(filas - 1, columnas))
  
-        self.horiz_tabs = rng.choice([1, -1], size=(rows, cols - 1))
- 
-        self.vert_tabs = rng.choice([1, -1], size=(rows - 1, cols))
- 
-        if discrete:
-            perfiles = TABLA_BORDES_DISCRETOS["perfiles"]
-            posiciones = TABLA_BORDES_DISCRETOS["posiciones"]
-            profundidades = TABLA_BORDES_DISCRETOS["profundidades"]
-            anchos = TABLA_BORDES_DISCRETOS["anchos"]
- 
-            self.allowed_profiles = list(perfiles)
-            self.horiz_profile_types = rng.choice(perfiles, size=(rows, cols - 1))
-            self.vert_profile_types = rng.choice(perfiles, size=(rows - 1, cols))
- 
-            self.horiz_centers = rng.choice(posiciones, size=(rows, cols - 1))
-            self.vert_centers = rng.choice(posiciones, size=(rows - 1, cols))
-            self.horiz_depths = rng.choice(profundidades, size=(rows, cols - 1))
-            self.vert_depths = rng.choice(profundidades, size=(rows - 1, cols))
-            self.horiz_widths = rng.choice(anchos, size=(rows, cols - 1))
-            self.vert_widths = rng.choice(anchos, size=(rows - 1, cols))
+        if self.utilizar_muecas_pre_definidas:
+            self.perfiles_permitidos = TABLA_BORDES_DISCRETOS["perfiles"]
+            posibles_ubicacion_centros = TABLA_BORDES_DISCRETOS["posiciones"]
+            posibles_profundidad = TABLA_BORDES_DISCRETOS["profundidades"]
+            posibles_anchos = TABLA_BORDES_DISCRETOS["anchos"]
+
         else:
-            self.allowed_profiles = profile_types if profile_types is not None else ["standard", "circular", "wide"]
-            self.horiz_profile_types = rng.choice(self.allowed_profiles, size=(rows, cols - 1))
-            self.vert_profile_types = rng.choice(self.allowed_profiles, size=(rows - 1, cols))
- 
-            self.horiz_centers = rng.uniform(0.40, 0.60, size=(rows, cols - 1))
-            self.vert_centers = rng.uniform(0.40, 0.60, size=(rows - 1, cols))
-            self.horiz_depths = rng.uniform(0.18, 0.22, size=(rows, cols - 1))
-            self.vert_depths = rng.uniform(0.18, 0.22, size=(rows - 1, cols))
-            self.horiz_widths = rng.uniform(0.28, 0.34, size=(rows, cols - 1))
-            self.vert_widths = rng.uniform(0.28, 0.34, size=(rows - 1, cols))
- 
-        self._seams_v = {} 
-        self._seams_h = {}
-        self._compute_canonical_seams(num_pts=60)
+            # Los valores son porcentajes sobre el largo del borde
+            self.perfiles_permitidos = profile_types
+            posibles_ubicacion_centros = np.linspace(0.40, 0.60, 21)
+            posibles_profundidad = np.linspace(0.18, 0.22, 5)
+            posibles_anchos = np.linspace(0.28, 0.34, 7)
 
+        self.tipos_perfiles_horizontales, self.tipos_perfiles_verticales = self._elegir_valor_para_border_horizontales_verticales(self.perfiles_permitidos, rng)
+        self.centros_horizontales, self.centros_verticales = self._elegir_valor_para_border_horizontales_verticales(posibles_ubicacion_centros, rng)
+        self.profundidades_horizontales, self.profundidades_verticales = self._elegir_valor_para_border_horizontales_verticales(posibles_profundidad, rng)
+        self.anchos_horizontales, self.anchos_verticales = self._elegir_valor_para_border_horizontales_verticales(posibles_anchos, rng)
+ 
+        self._siluetas_verticales = {} 
+        self._siluetas_horizontales = {}
+        self._generar_puntos_silueta_por_pieza()
 
-    def _compute_canonical_seams(self, num_pts: int = 60) -> None:
+# region Elegir por Borde
+    def _elegir_valor_para_borde_horizontal_por_pieza(self, lista_de_valores, generador):
+        return generador.choice(lista_de_valores, size=(self.filas, self.columnas - 1))
+
+    def _elegir_valor_para_borde_vertical_por_pieza(self, lista_de_valores, generador):
+        return generador.choice(lista_de_valores, size=(self.filas-1, self.columnas))
+
+    def _elegir_valor_para_border_horizontales_verticales(self, lista_de_valores, generador):
+        valores_borde_horizontales = self._elegir_valor_para_borde_horizontal_por_pieza(lista_de_valores, generador)
+        valores_borde_vertical = self._elegir_valor_para_borde_vertical_por_pieza(lista_de_valores, generador)
+        return valores_borde_horizontales, valores_borde_vertical
+# endregion
+
+# region Generacion de Siluetas
+    def _generar_silueta_semicircular(self, distacia_al_centro_de_la_muesca: float) -> float:
+        # Genera un semi-circulo unitario para -1 <= x <= 1 y 0 en el resto
+        
+        # (X^2 + Y^2 = 1) -> (X^2 - 1 = Y^2)
+        altura_del_punto = 1.0 - (distacia_al_centro_de_la_muesca ** 2)
+
+        # Clipeamos la parte liza del borde
+        altura_del_punto = max(0.0, altura_del_punto)
+        altura_del_punto = np.sqrt(altura_del_punto) 
+        return float(altura_del_punto)
+
+    def _generar_silueta_unitaria_copa_sinuisal(self, distacia_al_centro_de_la_muesca: float, coeficiente_puntiagudo_copa) -> float:
+
+        # Coseno con copa superior entre -1 y 1, despues nula
+        if np.abs(distacia_al_centro_de_la_muesca) <= 1:
+            silueta_unitaria = np.cos(distacia_al_centro_de_la_muesca * np.pi / 2.0)
+        else:
+            silueta_unitaria = 0
+
+        return float(silueta_unitaria ** coeficiente_puntiagudo_copa)
+
+    def _generar_silueta_ancha(self, distacia_al_centro_de_la_muesca):
+        return self._generar_silueta_unitaria_copa_sinuisal(distacia_al_centro_de_la_muesca, 1.3)
+
+    def _generar_siluesta_gaussiana(self, distacia_al_centro_de_la_muesca):
+        distancia_normalizada = distacia_al_centro_de_la_muesca ** 2
+        if distancia_normalizada <= 1:
+            # Utilizamos una constante para que 1 este muy cerca de 0. Con 7 -> 0.001
+            silueta_gaussiana = np.exp(-7 * distancia_normalizada)
+        else:
+            silueta_gaussiana = 0
+        return float(silueta_gaussiana)
+
+    def _generar_silueta_por_tipo(self, prof: str, distacia_al_centro_de_la_muesca: float) -> float:
+        #Desplazamiento perpendicular normalizado segun el perfil del encastre
+
+        if prof == "semicircular":
+            return self._generar_silueta_semicircular(distacia_al_centro_de_la_muesca)
+        elif prof == "ancha":
+            return self._generar_silueta_ancha(distacia_al_centro_de_la_muesca)
+        elif prof == "gaussian":
+            return self._generar_siluesta_gaussiana(distacia_al_centro_de_la_muesca)
+        else:
+            raise ValueError("Tipo No Valido")
+
+    def generar_puntos_silueta_en_interseccion(self, inicio_interseccion, fila, columna, largo_borde, es_vertical):
+
+        if es_vertical:
+            perfil_entre_piezas = self.tipos_perfiles_verticales[fila, columna]
+            direccion_muestra = self.direccion_muesca_vertical[fila, columna]
+            profundidad_muesca = self.profundidades_verticales[fila, columna] * self.altura_pieza
+            ancho_muesca = self.anchos_verticales[fila, columna]
+            centro_muesca = self.centros_verticales[fila, columna]
+        else:
+            perfil_entre_piezas = self.tipos_perfiles_horizontales[fila, columna]
+            direccion_muestra = self.direccion_muesca_horizontal[fila, columna]
+            profundidad_muesca = self.profundidades_horizontales[fila, columna] * self.ancho_pieza
+            ancho_muesca = self.anchos_horizontales[fila, columna]
+            centro_muesca = self.centros_horizontales[fila, columna]
+
+        radio_muesca = ancho_muesca / 2
+
+        puntos_muesca = []
+        for pixel_en_borde in range(0, largo_borde):
+            progreso_en_borde = pixel_en_borde / (largo_borde - 1)
+            distancia_al_centro = progreso_en_borde - centro_muesca
+            distancia_al_centro_relativa = distancia_al_centro / radio_muesca
+
+            altura_perfil_relativa = self._generar_silueta_por_tipo(perfil_entre_piezas, distancia_al_centro_relativa)
+            altura_perfil = altura_perfil_relativa * profundidad_muesca
+            altura_perfil = altura_perfil * direccion_muestra
+
+            if es_vertical:
+                punto_muesca = [pixel_en_borde, altura_perfil]
+            else:
+                punto_muesca = [altura_perfil, pixel_en_borde]
+
+            punto_muesca = np.array(punto_muesca, dtype=np.float32)
+            puntos_muesca.append(inicio_interseccion + punto_muesca) 
+
+        return puntos_muesca
+    
+    def _generar_puntos_silueta_por_pieza(self) -> None:
         """Calcula una única vez cada curva de unión interior compartida."""
+
         # 1. Costuras horizontales: entre fila r y r+1
-        for r in range(self.rows - 1):
-            for c in range(self.cols):
-                p0 = np.array([c * self.tile_w, (r + 1) * self.tile_h], dtype=np.float32)
-                p1 = np.array([(c + 1) * self.tile_w, (r + 1) * self.tile_h], dtype=np.float32)
-                prof = str(self.vert_profile_types[r, c])
-                tab_dir = int(self.vert_tabs[r, c])
- 
-                u = (p1 - p0) / float(self.tile_w)
-                n = np.array([0.0, 1.0], dtype=np.float32) if tab_dir == 1 else np.array([0.0, -1.0], dtype=np.float32)
- 
-                length = float(self.tile_w)
-                depth = length * float(self.vert_depths[r, c])
-                width = length * float(self.vert_widths[r, c])
-                center = float(self.vert_centers[r, c]) * length
- 
-                pts = []
-                for t in np.linspace(0.0, 1.0, num_pts):
-                    s = t * length
-                    dist = (s - center) / (width / 2.0)
-                    if abs(dist) <= 1.0:
-                        x_norm = float(dist)
-                        bulb = _calcular_bulb(prof, x_norm)
-                    else:
-                        bulb = 0.0
-                    pts.append(p0 + s * u + (depth * bulb) * n)
-                self._seams_v[(r, c)] = np.array(pts, dtype=np.float32)
+        for fila in range(self.filas - 1):
+            for columna in range(self.columnas):
+                
+                coordena_y_interseccion = (fila + 1) * self.altura_pieza
+                coordenada_x_inicio_interseccion = columna * self.ancho_pieza 
+                
+                inicio_interseccion = np.array([coordenada_x_inicio_interseccion, coordena_y_interseccion], dtype=np.float32)
+
+                puntos_muesca = self.generar_puntos_silueta_en_interseccion(inicio_interseccion, fila, columna, largo_borde=self.ancho_pieza, es_vertical=True)   
+                self._siluetas_verticales[(fila, columna)] = np.array(puntos_muesca, dtype=np.float32)
  
         # 2. Costuras verticales: entre columna c y c+1
-        for r in range(self.rows):
-            for c in range(self.cols - 1):
-                p0 = np.array([(c + 1) * self.tile_w, r * self.tile_h], dtype=np.float32)
-                p1 = np.array([(c + 1) * self.tile_w, (r + 1) * self.tile_h], dtype=np.float32)
-                prof = str(self.horiz_profile_types[r, c])
-                tab_dir = int(self.horiz_tabs[r, c])
- 
-                u = (p1 - p0) / float(self.tile_h)
-                n = np.array([1.0, 0.0], dtype=np.float32) if tab_dir == 1 else np.array([-1.0, 0.0], dtype=np.float32)
- 
-                length = float(self.tile_h)
-                depth = length * float(self.horiz_depths[r, c])
-                width = length * float(self.horiz_widths[r, c])
-                center = float(self.horiz_centers[r, c]) * length
- 
-                pts = []
-                for t in np.linspace(0.0, 1.0, num_pts):
-                    s = t * length
-                    dist = (s - center) / (width / 2.0)
-                    if abs(dist) <= 1.0:
-                        x_norm = float(dist)
-                        bulb = _calcular_bulb(prof, x_norm)
-                    else:
-                        bulb = 0.0
-                    pts.append(p0 + s * u + (depth * bulb) * n)
-                self._seams_h[(r, c)] = np.array(pts, dtype=np.float32)
+        for fila in range(self.filas):
+            for columna in range(self.columnas - 1):
 
-    def get_piece_edge_types(self, r: int, c: int) -> Dict[str, str]:
-        """Devuelve 'PLANO', 'SALIENTE', 'ENTRANTE' para cada lado N, S, E, W de la pieza (r, c)."""
-        type_n = "PLANO" if r == 0 else ("ENTRANTE" if self.vert_tabs[r - 1, c] == 1 else "SALIENTE")
-        type_s = "PLANO" if r == self.rows - 1 else ("SALIENTE" if self.vert_tabs[r, c] == 1 else "ENTRANTE")
-        type_w = "PLANO" if c == 0 else ("ENTRANTE" if self.horiz_tabs[r, c - 1] == 1 else "SALIENTE")
-        type_e = "PLANO" if c == self.cols - 1 else ("SALIENTE" if self.horiz_tabs[r, c] == 1 else "ENTRANTE")
-        return {"NORTE": type_n, "SUR": type_s, "OESTE": type_w, "ESTE": type_e}
+                coordena_x_interseccion = (columna + 1) * self.ancho_pieza
+                coordenada_y_inicio_interseccion = fila * self.altura_pieza 
 
-    def get_piece_edge_curves(self, r: int, c: int) -> Dict[str, str]:
+                inicio_interseccion = np.array([coordena_x_interseccion, coordenada_y_inicio_interseccion], dtype=np.float32)
+
+                puntos_muesca = self.generar_puntos_silueta_en_interseccion(inicio_interseccion, fila, columna, largo_borde=self.altura_pieza, es_vertical=False)   
+                self._siluetas_horizontales[(fila, columna)] = np.array(puntos_muesca, dtype=np.float32)
+
+# endregion
+
+# region Devolver Tipo de Borde
+
+    def _tipo_de_borde_por_direccion(self, direccion:int) -> str:
+        if direccion == 1:
+            return "SALIENTE"
+        elif direccion == -1:
+            return "ENTRANTE"
+        else:
+            raise ValueError("Direccion No Valida")
+
+    def _encontrar_tipo_de_borde_norte(self, fila:int, columna:int) -> str:
+        if fila == 0:
+            return "PLANO"
+
+        direccion_muesca_pieza_superior = self.direccion_muesca_vertical[fila - 1, columna]
+
+        # Invierto para tener mi direccion
+        return self._tipo_de_borde_por_direccion(-direccion_muesca_pieza_superior)
+
+    def _encontrar_tipo_de_borde_sur(self, fila:int, columna:int) -> str:
+        if fila == (self.filas - 1):
+            return "PLANO"
+
+        direccion_muesca_pieza = self.direccion_muesca_vertical[fila, columna]
+        return self._tipo_de_borde_por_direccion(direccion_muesca_pieza)
+
+    def _encontrar_tipo_de_borde_oeste(self, fila:int, columna:int) -> str:
+        if columna == 0:
+            return "PLANO"
+
+        # Invierto para tener mi direccion
+        direccion_muesca_pieza_izquierda = self.direccion_muesca_horizontal[fila, columna - 1]
+        return self._tipo_de_borde_por_direccion(-direccion_muesca_pieza_izquierda)
+
+    def _encontrar_tipo_de_borde_este(self, fila:int, columna:int) -> str:
+        if columna == (self.columnas - 1):
+            return "PLANO"
+
+        direccion_muesca_pieza = self.direccion_muesca_horizontal[fila, columna]
+        return self._tipo_de_borde_por_direccion(direccion_muesca_pieza)
+
+    def get_piece_edge_types(self, fila: int, columna: int) -> Dict[str, str]:
+        """Devuelve 'PLANO', 'SALIENTE', 'ENTRANTE' para cada lado N, S, E, W de la pieza (fila, columna)."""
+        tipo_borde_norte = self._encontrar_tipo_de_borde_norte(fila, columna)
+        tipo_borde_sur = self._encontrar_tipo_de_borde_sur(fila, columna)
+        tipo_borde_oeste = self._encontrar_tipo_de_borde_oeste(fila,columna)
+        tipo_borde_este = self._encontrar_tipo_de_borde_este(fila,columna)
+        return {"NORTE": tipo_borde_norte, "SUR": tipo_borde_sur, "OESTE": tipo_borde_oeste, "ESTE": tipo_borde_este}
+
+# endregion
+
+# region Devolver Tipo Perfil Borde
+    def _encontrar_perfil_de_borde_norte(self, fila:int, columna:int) -> str:
+        if fila == 0:
+            return "none"
+        
+        # Agarro el de la pieza de arriba
+        return self.tipos_perfiles_verticales[fila - 1, columna]
+
+
+    def _encontrar_perfil_de_borde_sur(self, fila:int, columna:int) -> str:
+        if fila == (self.filas - 1):
+            return "none"
+        return self.tipos_perfiles_verticales[fila, columna]
+
+    def _encontrar_perfil_de_borde_oeste(self, fila:int, columna:int) -> str:
+        if columna == 0:
+            return "none"
+
+        # Agarro el de la pieza a mi izquierda
+        return self.tipos_perfiles_horizontales[fila, columna - 1]
+
+    def _encontrar_perfil_de_borde_este(self, fila:int, columna:int) -> str:
+        if columna == (self.columnas - 1):
+            return "none"
+
+        return self.tipos_perfiles_horizontales[fila, columna]
+
+    def get_piece_edge_curves(self, fila: int, columna: int) -> Dict[str, str]:
         """Devuelve el perfil ('none', 'standard', 'circular', 'wide') para cada lado."""
-        prof_n = "none" if r == 0 else str(self.vert_profile_types[r - 1, c])
-        prof_s = "none" if r == self.rows - 1 else str(self.vert_profile_types[r, c])
-        prof_w = "none" if c == 0 else str(self.horiz_profile_types[r, c - 1])
-        prof_e = "none" if c == self.cols - 1 else str(self.horiz_profile_types[r, c])
-        return {"NORTE": prof_n, "SUR": prof_s, "OESTE": prof_w, "ESTE": prof_e}
+        tipo_perfil_borde_norte = self._encontrar_perfil_de_borde_norte(fila,columna)
+        tipo_perfil_borde_sur = self._encontrar_perfil_de_borde_sur(fila,columna)
+        tipo_perfil_borde_oeste = self._encontrar_perfil_de_borde_oeste(fila,columna)
+        tipo_perfil_borde_este = self._encontrar_perfil_de_borde_este(fila,columna)
+        return {"NORTE": tipo_perfil_borde_norte, "SUR": tipo_perfil_borde_sur, "OESTE": tipo_perfil_borde_oeste, "ESTE": tipo_perfil_borde_este}
 
-    def get_piece_edges(self, r: int, c: int, num_pts: int = 60) -> Dict[str, np.ndarray]:
+# endregion
+
+# region Devolver Silueta Borde
+
+    def _generar_borde_horizontal_plano(self, columna:int, y_fijo) -> np.ndarray:
+        x_inicio = columna * self.ancho_pieza
+        x_final = x_inicio + self.ancho_pieza
+        return np.array([[x, y_fijo] for x in range(x_inicio, x_final)])
+
+    def _generar_borde_vertical_plano(self, fila:int, x_fijo) -> np.ndarray:
+        y_inicio = fila * self.altura_pieza
+        y_final = y_inicio + self.altura_pieza
+        return np.array([[x_fijo, y] for y in range(y_inicio, y_final)])
+
+    def _encontrar_silueta_borde_norte(self, fila: int, columna: int) -> np.ndarray:
+        if fila == 0:
+            return self._generar_borde_horizontal_plano(columna, 0)
+        else:
+            # Voy a la pieza arriba para encontrarla
+            return self._siluetas_verticales[(fila - 1, columna)].copy()
+
+    def _encontrar_silueta_borde_sur(self, fila: int, columna: int) -> np.ndarray:
+        if fila == self.filas - 1:
+
+            return self._generar_borde_horizontal_plano(columna, self.altura_imagen - 1)
+        else:
+            return self._siluetas_verticales[(fila, columna)].copy()
+
+    def _encontrar_silueta_borde_oeste(self, fila: int, columna: int) -> np.ndarray:
+        if columna == 0:
+            return self._generar_borde_vertical_plano(fila, 0)
+        else:
+            # Voy a la pieza izquierda para encontrarla
+            return self._siluetas_horizontales[(fila, columna - 1)].copy()
+
+    def _encontrar_silueta_borde_este(self, fila: int, columna: int) -> np.ndarray:
+        if columna == self.columnas - 1:
+            return self._generar_borde_vertical_plano(fila, self.ancho_imagen - 1)
+        else:
+            return self._siluetas_horizontales[(fila, columna)].copy()
+
+    def get_piece_edges(self, fila: int, columna: int) -> Dict[str, np.ndarray]:
         """Retorna las 4 curvas del contorno de la pieza (r, c) orientadas en sentido horario."""
-        if r == 0:
-            curve_n = np.array([[x, 0.0] for x in np.linspace(c * self.tile_w, (c + 1) * self.tile_w, num_pts)], dtype=np.float32)
-        else:
-            curve_n = self._seams_v[(r - 1, c)].copy()
- 
-        if c == self.cols - 1:
-            curve_e = np.array([[(c + 1) * self.tile_w, y] for y in np.linspace(r * self.tile_h, (r + 1) * self.tile_h, num_pts)], dtype=np.float32)
-        else:
-            curve_e = self._seams_h[(r, c)].copy()
- 
-        if r == self.rows - 1:
-            curve_s = np.array([[x, (r + 1) * self.tile_h] for x in np.linspace((c + 1) * self.tile_w, c * self.tile_w, num_pts)], dtype=np.float32)
-        else:
-            curve_s = self._seams_v[(r, c)][::-1].copy()
- 
-        if c == 0:
-            curve_w = np.array([[0.0, y] for y in np.linspace((r + 1) * self.tile_h, r * self.tile_h, num_pts)], dtype=np.float32)
-        else:
-            curve_w = self._seams_h[(r, c - 1)][::-1].copy()
- 
-        return {"NORTE": curve_n, "ESTE": curve_e, "SUR": curve_s, "OESTE": curve_w}
 
-    def get_piece_polygon(self, r: int, c: int, num_pts_per_edge: int = 60) -> np.ndarray:
+        silueta_norte = self._encontrar_silueta_borde_norte(fila,columna)
+        silueta_sur = self._encontrar_silueta_borde_sur(fila,columna)
+        silueta_oeste = self._encontrar_silueta_borde_oeste(fila,columna)
+        silueta_este = self._encontrar_silueta_borde_este(fila,columna)
+
+        return {"NORTE": silueta_norte, "ESTE": silueta_este, "SUR": silueta_sur, "OESTE": silueta_oeste}
+
+# endregion
+
+    def get_piece_polygon(self, fila: int, columna: int) -> np.ndarray:
         """Retorna el polígono 2D cerrado en sentido horario."""
-        edges = self.get_piece_edges(r, c, num_pts=num_pts_per_edge)
-        return np.vstack([edges["NORTE"], edges["ESTE"], edges["SUR"], edges["OESTE"]])
+        edges = self.get_piece_edges(fila, columna)
+        # Doy vuelta sur y oeste para que empiezen de deracha a izquierda y de abajo hacia arriba
+        return np.vstack([edges["NORTE"], edges["ESTE"], np.flip(edges["SUR"], axis=0), np.flip(edges["OESTE"], axis=0)])
 
     def extract_piece_image(
         self,
         full_image: np.ndarray,
-        r: int,
-        c: int,
+        fila: int,
+        columna: int,
         padding: int = 35,
     ) -> Tuple[np.ndarray, np.ndarray, Tuple[int, int]]:
         """
@@ -272,52 +367,58 @@ class JigsawGridGeometry:
             - piece_mask: Máscara binaria (uint8: 255 pieza, 0 fondo).
             - (offset_x, offset_y): Coordenadas globales de la esquina sup-izq del parche.
         """
-        poly = self.get_piece_polygon(r, c)
+        poligono_silueta_pieza = self.get_piece_polygon(fila, columna)
+        poligono_silueta_pieza = np.round(poligono_silueta_pieza).astype(np.int32)
 
-        pad_x = int(np.ceil(self.tile_w * 0.25)) + padding
-        pad_y = int(np.ceil(self.tile_h * 0.25)) + padding
+        x_inicio_silueta = np.min(poligono_silueta_pieza[:, 0])
+        x_fin_silueta = np.max(poligono_silueta_pieza[:, 0]) + 1
 
-        crop_w = self.tile_w + 2 * pad_x
-        crop_h = self.tile_h + 2 * pad_y
+        y_inicio_silueta = np.min(poligono_silueta_pieza[:, 1])
+        y_fin_silueta = np.max(poligono_silueta_pieza[:, 1]) + 1
 
-        min_x = c * self.tile_w - pad_x
-        max_x = min_x + crop_w
-        min_y = r * self.tile_h - pad_y
-        max_y = min_y + crop_h
+        ancho_silueta = x_fin_silueta - x_inicio_silueta
+        alto_silueta = y_fin_silueta - y_inicio_silueta
+        
+        # Lo hago siempre par para evitar problemas
+        if padding % 2 != 0:
+            padding += 1
+
+        ancho_silueta_padded = ancho_silueta + padding
+        alto_silueta_padded = alto_silueta + padding
+        offset = padding // 2
 
         canales = full_image.shape[2] if full_image.ndim == 3 else 1
-        piece_img = np.zeros((crop_h, crop_w, canales), dtype=full_image.dtype)
-        mask = np.zeros((crop_h, crop_w), dtype=np.uint8)
+        pieza_recortada = np.zeros((alto_silueta_padded, ancho_silueta_padded, canales), dtype=full_image.dtype)
+        mascara = np.zeros((alto_silueta_padded, ancho_silueta_padded), dtype=np.uint8)
+        
+        # esto es igual al padding
+        x_inicio_imagen_destino = offset
+        x_fin_imagen_destino = x_inicio_imagen_destino + ancho_silueta
+        y_inicio_imagen_destino = offset
+        y_fin_imagen_destino = y_inicio_imagen_destino + alto_silueta
 
-        src_x0 = max(0, min_x)
-        src_x1 = min(self.img_w, max_x)
-        src_y0 = max(0, min_y)
-        src_y1 = min(self.img_h, max_y)
+        if not (x_fin_silueta > x_inicio_silueta) or not (y_fin_silueta > y_inicio_silueta):
+            raise ValueError("Rangos Invalidos")
 
-        dst_x0 = src_x0 - min_x
-        dst_x1 = dst_x0 + (src_x1 - src_x0)
-        dst_y0 = src_y0 - min_y
-        dst_y1 = dst_y0 + (src_y1 - src_y0)
+        patch = full_image[y_inicio_silueta:y_fin_silueta, x_inicio_silueta:x_fin_silueta]
+        pieza_recortada[y_inicio_imagen_destino:y_fin_imagen_destino, x_inicio_imagen_destino:x_fin_imagen_destino, :] = patch
 
-        if src_x1 > src_x0 and src_y1 > src_y0:
-            patch = full_image[src_y0:src_y1, src_x0:src_x1]
-            if issubclass(full_image.dtype.type, np.floating):
-                # Asegurar valor mínimo pequeño para no confundir con fondo negro puro
-                piece_img[dst_y0:dst_y1, dst_x0:dst_x1] = np.maximum(patch, 1e-4)
-            else:
-                piece_img[dst_y0:dst_y1, dst_x0:dst_x1] = np.maximum(patch, 1)
-
-        local_poly = poly.copy()
-        local_poly[:, 0] -= min_x
-        local_poly[:, 1] -= min_y
-        local_poly_int = np.round(local_poly).astype(np.int32)
-
-        cv2.fillPoly(mask, [local_poly_int], 255)
-
-        if piece_img.ndim == 3:
-            for ch in range(canales):
-                piece_img[:, :, ch] = np.where(mask > 0, piece_img[:, :, ch], 0)
+        # Asegurar valor mínimo pequeño para no confundir con fondo negro puro
+        if issubclass(full_image.dtype.type, np.floating):
+            pieza_recortada = np.maximum(pieza_recortada, MINIMO_CONTENIDO_MASCARA_FLOAT)
         else:
-            piece_img = np.where(mask > 0, piece_img, 0)
+            pieza_recortada = np.maximum(pieza_recortada, MINIMO_CONTENIDO_MASCARA_INT)
 
-        return piece_img, mask, (min_x, min_y)
+        #mando la mascara para que el inicio coincida con cero y despues offseteo por el padding
+        poligono_mascara = poligono_silueta_pieza.copy()
+        poligono_mascara[:, 0] -= x_inicio_silueta
+        poligono_mascara[:, 1] -= y_inicio_silueta
+        poligono_mascara[:, 0] += offset
+        poligono_mascara[:, 1] += offset
+
+        cv2.fillPoly(mascara, [poligono_mascara], 255)
+
+        for canal in range(canales):
+            pieza_recortada[:, :, canal] = np.where(mascara > 0, pieza_recortada[:, :, canal], 0)
+
+        return pieza_recortada, mascara, (x_inicio_silueta, y_inicio_silueta)

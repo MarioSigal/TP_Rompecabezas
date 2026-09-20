@@ -23,3 +23,5 @@ ENV/
 .vscode/
 .idea/
 *.swp
+experiments/*
+rompecabezas_tp/*
