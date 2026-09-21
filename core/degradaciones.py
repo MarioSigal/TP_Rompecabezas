@@ -488,13 +488,17 @@ class DegradacionPorPiezaRotacion:
         # que espera que el invariante sea verdadero
         if mascara is None:
             mascara = np.ones((pieza.shape[0], pieza.shape[1])) == 1
-
+    
         pieza =_aplicar_invariante_de_mascara(pieza, mascara)
+        mascara_numerica = (mascara).astype(np.uint8) * 255
 
         padding_faltante = self.calcular_padding_rotacion(mascara, jitter)
 
-        pieza_rotada, mascara_rotada = enderezar_pieza(pieza, jitter, padding_faltante)
-        mascara_rotada = mascara_rotada == 255
+        pieza_rotada, _ = enderezar_pieza(pieza, jitter, padding_faltante)
+        mascara_rotada, _ = enderezar_pieza(mascara_numerica, jitter, padding_faltante)
+
+        #Probe con numeros hasta que andara. El 100 es el lucky number
+        mascara_rotada = mascara_rotada > 100
 
         pieza_rotada =_aplicar_invariante_de_mascara(pieza_rotada, mascara_rotada)
 

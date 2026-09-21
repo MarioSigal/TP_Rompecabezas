@@ -8,7 +8,7 @@ Permite:
 from typing import Tuple, Optional
 import numpy as np
 import cv2
-from core.geometria_jigsaw import MINIMO_CONTENIDO_MASCARA_FLOAT, MINIMO_CONTENIDO_MASCARA_INT
+from core.detector_forma import generar_mascara_de_pieza
 
 __all__ = [
     "estimar_orientacion_fourier",
@@ -53,7 +53,7 @@ def estimar_orientacion_sobel(
 def enderezar_pieza(
     imagen: np.ndarray,
     angulo_grados: float,
-    padding: int = 0,
+    padding: int = 0
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Rota la pieza para enderezarla alrededor de su centro geométrico.
@@ -84,14 +84,11 @@ def enderezar_pieza(
             matriz_rot,
             (pw, ph),
             flags=cv2.INTER_CUBIC,
-            borderMode=cv2.BORDER_REPLICATE,
+            borderMode=cv2.BORDER_CONSTANT,
             borderValue=0,
         )
 
-    if issubclass(rectificada.dtype.type, np.floating):
-        mask = (np.max(rectificada, axis=2) >= MINIMO_CONTENIDO_MASCARA_FLOAT).astype(np.uint8) * 255 if rectificada.ndim == 3 else (rectificada >= MINIMO_CONTENIDO_MASCARA_FLOAT).astype(np.uint8) * 255
-    else:
-        mask = (np.max(rectificada, axis=2) >= MINIMO_CONTENIDO_MASCARA_INT).astype(np.uint8) * 255 if rectificada.ndim == 3 else (rectificada > MINIMO_CONTENIDO_MASCARA_INT).astype(np.uint8) * 255
+    mask = generar_mascara_de_pieza(rectificada)
 
     return rectificada, mask
 

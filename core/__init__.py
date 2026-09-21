@@ -30,11 +30,10 @@ from .geometria_jigsaw import (
     JigsawGridGeometry,
 )
 from .detector_forma import (
-    binarize_piece,
-    extract_external_contour,
-    detect_jigsaw_corners,
+    generar_mascara_de_pieza,
+    extraer_contorno_externo,
+    detectar_esquinas_de_pieza,
     detect_corners_and_split_sides,
-    segmentar_lados_pieza,
     segmentar_borde_en_4,
     pasar_borde_a_1d,
     extraer_perfil_1d,
@@ -93,8 +92,8 @@ __all__ = [
     # Jigsaw
     "generate_tab_curve", "JigsawGridGeometry",
     # Forma
-    "binarize_piece", "extract_external_contour", "detect_jigsaw_corners", "detect_corners_and_split_sides",
-    "segmentar_lados_pieza", "segmentar_borde_en_4", "pasar_borde_a_1d", "extraer_perfil_1d", "analyze_piece_shape",
+    "generar_mascara_de_pieza", "extraer_contorno_externo", "detectar_esquinas_de_pieza", "detect_corners_and_split_sides",
+    "segmentar_borde_en_4", "pasar_borde_a_1d", "extraer_perfil_1d", "analyze_piece_shape",
     "compute_edge_correlation", "compute_jigsaw_shape_compatibility", "compatibilidad_forma",
     # Rotación
     "estimar_orientacion_fourier", "estimar_orientacion_sobel", "enderezar_pieza", "rotar_imagen_ortogonal",

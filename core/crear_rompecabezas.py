@@ -5,6 +5,7 @@
 from typing import Callable, Dict, List, Optional, Tuple, Any, Union
 from pathlib import Path
 import numpy as np
+from core.detector_forma import generar_mascara_de_pieza, analyze_piece_shape
 import cv2
 
 try:
@@ -159,36 +160,81 @@ class Rompecabezas:
                     id_p = int(grilla_arr[r, c])
                     if 0 <= id_p < len(lista_piezas):
                         p_img = lista_piezas[id_p]
-                        ph, pw = p_img.shape[:2]
-                        pad_y = max(0, (ph - tile_h) // 2)
-                        pad_x = max(0, (pw - tile_w) // 2)
+                        
+                        informacion_bordes = analyze_piece_shape(p_img)
+                        informacion_borde_norte = informacion_bordes["sides"]["NORTE"]
+                        informacion_borde_oeste = informacion_bordes["sides"]["OESTE"]
 
-                        y0_dst = r * tile_h - pad_y
-                        x0_dst = c * tile_w - pad_x
-                        y1_dst = y0_dst + ph
-                        x1_dst = x0_dst + pw
+                        desviacion_arriba = informacion_borde_norte["max_dev"]
+                        desviacion_izquierda = informacion_borde_oeste["max_dev"]
 
-                        y0_src = max(0, -y0_dst)
-                        x0_src = max(0, -x0_dst)
-                        y1_src = ph - max(0, y1_dst - h)
-                        x1_src = pw - max(0, x1_dst - w)
+                        mascara_binaria = informacion_bordes["binary_mask"] == 255
 
-                        y0_dst = max(0, y0_dst)
-                        x0_dst = max(0, x0_dst)
-                        y1_dst = min(h, y1_dst)
-                        x1_dst = min(w, x1_dst)
+                        y, x = np.where(mascara_binaria)
 
-                        if y1_src > y0_src and x1_src > x0_src and y1_dst > y0_dst and x1_dst > x0_dst:
-                            patch_src = p_img[y0_src:y1_src, x0_src:x1_src]
-                            mask = np.any(patch_src > 0.005, axis=-1) if patch_src.ndim == 3 else (patch_src > 0.005)
+                        y_inicio = np.min(y)
+                        y_fin = np.max(y)
+                        x_inicio = np.min(x)
+                        x_fin = np.max(x)
 
-                            for ch in range(canales):
-                                cur_ch = lienzo[y0_dst:y1_dst, x0_dst:x1_dst, ch]
-                                src_ch = patch_src[:, :, ch] if patch_src.ndim == 3 else patch_src
-                                lienzo[y0_dst:y1_dst, x0_dst:x1_dst, ch] = np.where(mask, src_ch, cur_ch)
+                        y0_dst = int(np.maximum(r * tile_h - desviacion_arriba, 0))
+                        x0_dst = int(np.maximum(c * tile_w - desviacion_izquierda, 0))
+
+                        if y0_dst == 0:
+                            y_inicio += desviacion_arriba
+                            y_inicio = int(y_inicio)
+
+                        if x0_dst == 0:
+                            x_inicio += desviacion_izquierda
+                            x_inicio = int(x_inicio)
+
+                        altura = y_fin - y_inicio
+                        ancho = x_fin - x_inicio 
+
+                        altura_en_lienzo = np.minimum(altura, h-y0_dst)
+                        ancho_en_lienza = np.minimum(ancho, w-x0_dst)
+                        
+                        y1_dst = int(y0_dst + altura_en_lienzo)
+                        x1_dst = int(x0_dst + ancho_en_lienza)
+
+                        patch_src = p_img[y_inicio:(y_inicio + altura_en_lienzo), x_inicio:(x_inicio + ancho_en_lienza)]
+
+                        for ch in range(canales):
+                            cur_ch = lienzo[y0_dst:y1_dst, x0_dst:x1_dst, ch]
+                            src_ch = patch_src[:, :, ch] if patch_src.ndim == 3 else patch_src
+                            lienzo[y0_dst:y1_dst, x0_dst:x1_dst, ch] = np.where(mascara_binaria[y_inicio:(y_inicio + altura_en_lienzo), x_inicio:(x_inicio + ancho_en_lienza)], src_ch, cur_ch)
+                        
+                        # ph, pw = p_img.shape[:2]
+                        # pad_y = max(0, (ph - tile_h) // 2)
+                        # pad_x = max(0, (pw - tile_w) // 2)
+
+                        # y0_dst = r * tile_h - pad_y
+                        # x0_dst = c * tile_w - pad_x
+                        # y1_dst = y0_dst + ph
+                        # x1_dst = x0_dst + pw
+
+                        # y0_src = max(0, -y0_dst)
+                        # x0_src = max(0, -x0_dst)
+                        # y1_src = ph - max(0, y1_dst - h)
+                        # x1_src = pw - max(0, x1_dst - w)
+
+                        # y0_dst = max(0, y0_dst)
+                        # x0_dst = max(0, x0_dst)
+                        # y1_dst = min(h, y1_dst)
+                        # x1_dst = min(w, x1_dst)
+
+                        # if y1_src > y0_src and x1_src > x0_src and y1_dst > y0_dst and x1_dst > x0_dst:
+                        #     patch_src = p_img[y0_src:y1_src, x0_src:x1_src]
+                        #     mask = np.any(patch_src > 0.005, axis=-1) if patch_src.ndim == 3 else (patch_src > 0.005)
+
+                        #     for ch in range(canales):
+                        #         cur_ch = lienzo[y0_dst:y1_dst, x0_dst:x1_dst, ch]
+                        #         src_ch = patch_src[:, :, ch] if patch_src.ndim == 3 else patch_src
+                        #         
+                                #lienzo[y0_dst:y1_dst, x0_dst:x1_dst, ch] = np.where(mask, src_ch, cur_ch)
 
             
-            mascara_negra = np.all(lienzo < 0.005, axis=-1) if canales == 3 else (lienzo < 0.005)
+            mascara_negra = np.all(lienzo < 0.1, axis=-1) if canales == 3 else (lienzo < 0.1)
             pct_negro = float(np.mean(mascara_negra))
             if 0 < pct_negro < 0.20:
                 mask_inpaint = mascara_negra.astype(np.uint8) * 255
@@ -324,6 +370,7 @@ def armar_caso_rompecabezas(
     # Si tienen ranura, ya tiene mascara
     if not tiene_ranuras:
         piezas_ordenadas = cortar_imagen_en_piezas(img_degradada, cantidad_filas, cantidad_columnas)
+        piezas_mascaras = [np.ones((pieza.shape[0], pieza.shape[1])) == 1 for pieza in piezas_ordenadas]
     else:
         jigsaw = JigsawGridGeometry(cantidad_filas, cantidad_columnas, altura, ancho, seed=semilla, discrete=True)
         piezas_ordenadas, piezas_mascaras = cortar_ranuras_en_piezas(img_degradada, jigsaw)
@@ -510,7 +557,6 @@ def crear_rompecabezas_nivel(
             cantidad_columnas=columnas,
             degradacion_global=degradacion_l1,
             semilla=semilla,
-            nivel=1,
             metadatos_adicionales={
                 "variante": clave_variante,
                 "nombre_ruido": info_variante["nombre"],
@@ -547,7 +593,6 @@ def crear_rompecabezas_nivel(
             cantidad_columnas=columnas,
             degradacion_por_pieza=degradador_l3,
             semilla=semilla,
-            nivel=3,
             metadatos_adicionales={"tipo_ruido": "trama_periodica_por_pieza",
                                    "nivel": 3},
         )

@@ -8,15 +8,16 @@ Permite:
 """
 
 from typing import Dict, List, Tuple, Any, Optional
+from core.geometria_jigsaw import MINIMO_CONTENIDO_MASCARA_FLOAT, MINIMO_CONTENIDO_MASCARA_INT
 import numpy as np
+from skimage.morphology import binary_erosion, binary_dilation, binary_closing, disk
 import cv2
 
 __all__ = [
-    "binarize_piece",
-    "extract_external_contour",
-    "detect_jigsaw_corners",
+    "generar_mascara_de_pieza",
+    "extraer_contorno_externo",
+    "detectar_esquinas_de_pieza",
     "detect_corners_and_split_sides",
-    "segmentar_lados_pieza",
     "segmentar_borde_en_4",
     "pasar_borde_a_1d",
     "extraer_perfil_1d",
@@ -29,129 +30,222 @@ __all__ = [
 
 _MSG_EJERCICIO = "Hola chismosin, fijate el contrato de la funcion guinio"
 
-
-def binarize_piece(img: np.ndarray, fixed_threshold: float = 0.01) -> np.ndarray:
+def generar_mascara_de_pieza(pieza: np.ndarray) -> np.ndarray:
     """
-    Binariza la imagen de la pieza aislando la silueta completa (255) del fondo negro (0).
-    Aplica relleno morfológico de huecos interiores.
-    Soporta float64 [0, 1] y uint8 [0, 255].
+    Binariza la imagen, supone que se sigue el invariante de la mascara.
     """
-    if issubclass(img.dtype.type, np.floating):
-        thresh = fixed_threshold
+    if issubclass(pieza.dtype.type, np.floating):
+        umbral_invariante_mascara_contenido = MINIMO_CONTENIDO_MASCARA_FLOAT
     else:
-        thresh = fixed_threshold * 255.0
+        umbral_invariante_mascara_contenido = MINIMO_CONTENIDO_MASCARA_INT
  
-    if img.ndim == 3:
-        max_channel = np.max(img, axis=2)
+    if pieza.ndim == 3:
+        canal_maximo = np.max(pieza, axis=2)
     else:
-        max_channel = img
+        canal_maximo = pieza
  
-    binary = (max_channel > thresh).astype(np.uint8) * 255
-
-    h, w = binary.shape
-    mask_flood = np.zeros((h + 2, w + 2), np.uint8)
-    bin_inv = cv2.floodFill(binary.copy(), mask_flood, (0, 0), 255)[1]
-    bin_filled = cv2.bitwise_not(bin_inv)
-    binary = cv2.bitwise_or(binary, bin_filled)
- 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
- 
+    binary = (canal_maximo >= umbral_invariante_mascara_contenido).astype(np.uint8) * 255
     return binary
 
+# mantenemos un alias a las funciones originales para que no se rompa todo en caso de que alguien l a este usando
+binarize_piece = generar_mascara_de_pieza
 
-def extract_external_contour(binary_mask: np.ndarray) -> np.ndarray:
+def extraer_contorno_externo(mascara_binaria: np.ndarray) -> np.ndarray:
     """Extrae el contorno exterior principal de mayor área."""
-    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    if not contours:
+
+    # Devuelve una cadena de puntos que son el contorno
+    contorno, _ = cv2.findContours(mascara_binaria, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+    if not contorno:
         raise ValueError("No se detectó ningún contorno en la máscara binaria provista.")
-    main_contour = max(contours, key=cv2.contourArea)
-    return main_contour.squeeze(axis=1)
 
+    # Deja solo el contorno verdadero
+    contorno_filtrado = max(contorno, key=cv2.contourArea)
 
-def detect_jigsaw_corners(contour_pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    # Eliminamos la tercera dimension que solo tiene un canal.
+    # Dejamos a la mascara con 2 dimensiones
+    return contorno_filtrado.squeeze(axis=1)
+
+extract_external_contour = extraer_contorno_externo
+
+# region encontrar_esquinas
+
+def _punto_en_mitad_izquierda(punto, centro_silueta_x):
+    return punto[0] <= centro_silueta_x
+
+def _punto_en_mitad_derecha(punto, centro_silueta_x):
+    return punto[0] >= centro_silueta_x
+
+def _punto_en_mitad_superior(punto, centro_silueta_y):
+    return punto[1] <= centro_silueta_y
+
+def _punto_en_mitad_inferior(punto, centro_silueta_y):
+    return punto[1] >= centro_silueta_y
+
+def _punto_a_la_izquierda_y_por_encima(punto, centro_silueta_x, centro_silueta_y):
+    return _punto_en_mitad_izquierda(punto, centro_silueta_x) and _punto_en_mitad_superior(punto, centro_silueta_y)
+
+def _punto_a_la_derecha_y_por_encima(punto, centro_silueta_x, centro_silueta_y):
+    return _punto_en_mitad_derecha(punto, centro_silueta_x) and _punto_en_mitad_superior(punto, centro_silueta_y)
+
+def _punto_a_la_izquierda_y_por_debajo(punto, centro_silueta_x, centro_silueta_y):
+    return _punto_en_mitad_izquierda(punto, centro_silueta_x) and _punto_en_mitad_inferior(punto, centro_silueta_y)
+
+def _punto_a_la_derecha_y_por_debajo(punto, centro_silueta_x, centro_silueta_y):
+    return _punto_en_mitad_derecha(punto, centro_silueta_x) and _punto_en_mitad_inferior(punto, centro_silueta_y)
+
+def _distacia_a_punto(punto, punto_referencia):
+    return (punto[0] - punto_referencia[0]) ** 2 + (punto[1] - punto_referencia[1]) ** 2
+
+def _encontrar_punto_mas_cercano_a_otro(puntos, punto_referencia):
+    return min(puntos, key=lambda punto: _distacia_a_punto(punto, punto_referencia))
+
+def _encontrar_punto_esquina(puntos_contorno, filtro_cuadrante, coordenada_esquina_absoluta):
+    mid_x, mid_y = np.mean(puntos_contorno, axis=0)
+    puntos_cuadrante = [p for p in puntos_contorno if filtro_cuadrante(p, mid_x, mid_y)]
+    return _encontrar_punto_mas_cercano_a_otro(puntos_cuadrante, coordenada_esquina_absoluta)
+
+def detectar_esquinas_de_pieza(contour_pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Detecta las 4 esquinas base (TL, TR, BR, BL) de la pieza."""
-    mid_x, mid_y = np.mean(contour_pts, axis=0)
- 
-    q_tl = [p for p in contour_pts if p[0] <= mid_x and p[1] <= mid_y]
-    q_tr = [p for p in contour_pts if p[0] >= mid_x and p[1] <= mid_y]
-    q_br = [p for p in contour_pts if p[0] >= mid_x and p[1] >= mid_y]
-    q_bl = [p for p in contour_pts if p[0] <= mid_x and p[1] >= mid_y]
- 
-    min_x, max_x = np.min(contour_pts[:, 0]), np.max(contour_pts[:, 0])
-    min_y, max_y = np.min(contour_pts[:, 1]), np.max(contour_pts[:, 1])
- 
-    c_tl = min(q_tl, key=lambda p: (p[0] - min_x) ** 2 + (p[1] - min_y) ** 2)
-    c_tr = min(q_tr, key=lambda p: (p[0] - max_x) ** 2 + (p[1] - min_y) ** 2)
-    c_br = min(q_br, key=lambda p: (p[0] - max_x) ** 2 + (p[1] - max_y) ** 2)
-    c_bl = min(q_bl, key=lambda p: (p[0] - min_x) ** 2 + (p[1] - max_y) ** 2)
- 
-    return np.array(c_tl), np.array(c_tr), np.array(c_br), np.array(c_bl)
+    """Supone una pieza, balanceada, sino se rompe, ver detectar_esquinas_de_pieza_desde_mascara"""
 
+    x_inicio, x_fin = np.min(contour_pts[:, 0]), np.max(contour_pts[:, 0])
+    y_inicio, y_fin = np.min(contour_pts[:, 1]), np.max(contour_pts[:, 1])
+
+    esquina_top_left_absoluta = (x_inicio, y_inicio)
+    esquina_top_right_absoluta = (x_fin, y_inicio)
+    esquina_bottom_right_absoluta = (x_fin, y_fin)
+    esquina_bottom_left_absoluta = (x_inicio, y_fin)
+
+    esquina_top_left = _encontrar_punto_esquina(contour_pts, _punto_a_la_izquierda_y_por_encima, esquina_top_left_absoluta)
+    esquina_top_right = _encontrar_punto_esquina(contour_pts, _punto_a_la_derecha_y_por_encima, esquina_top_right_absoluta)
+    esquina_bottom_right = _encontrar_punto_esquina(contour_pts, _punto_a_la_derecha_y_por_debajo, esquina_bottom_right_absoluta)
+    esquina_bottom_left = _encontrar_punto_esquina(contour_pts, _punto_a_la_izquierda_y_por_debajo, esquina_bottom_left_absoluta)
+ 
+    return np.array(esquina_top_left), np.array(esquina_top_right), np.array(esquina_bottom_right), np.array(esquina_bottom_left)
+
+def encontrar_gaps_en_arreglo(arreglo: np.ndarray):
+    # Find lower and upper bounds of the gaps
+    lower_bounds = (arreglo + 1)[:-1]
+    upper_bounds = (arreglo - 1)[1:]
+
+    # Filter valid gap ranges where lower <= upper
+    mask = lower_bounds <= upper_bounds
+    gap_starts = lower_bounds[mask]
+    gap_ends = upper_bounds[mask]
+    return list(zip(gap_starts, gap_ends))
+
+def llenar_gaps_verticales(mascara:np.ndarray):
+
+    for fila in mascara:
+        indices_mascara = np.where(fila) 
+        gaps = encontrar_gaps_en_arreglo(indices_mascara[0])
+        for inicio, fin in gaps:
+            fila[inicio: fin + 1] = True
+
+    return mascara
+
+def llenar_gaps_horizontales(mascara:np.ndarray):
+    return llenar_gaps_verticales(mascara.T).T
+
+def detectar_esquinas_de_pieza_desde_mascara(mascara: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Detecta las 4 esquinas base (TL, TR, BR, BL) de la pieza."""
+
+    coordenadas_y, coordenadas_x = np.where(mascara)
+    y_inicio, y_final = np.min(coordenadas_y), np.max(coordenadas_y)
+    x_inicio, x_final = np.min(coordenadas_x), np.max(coordenadas_x)
+    
+    altura = y_final - y_inicio  
+    ancho = x_final - x_inicio  
+
+    mascara_cerrada = llenar_gaps_verticales(mascara.copy())
+    mascara_cerrada = llenar_gaps_horizontales(mascara_cerrada)    
+
+    # no hacemos la mitad por si una muesca es muy profunda y llega a cruzar toda la pieza
+    kernel_vertical = np.ones((int(altura//1.75), 1))
+    kernel_horizontal = np.ones((1, int(ancho//1.75)))
+
+    mascara_fondo = ~mascara_cerrada
+    fondo_dilatado_verticalmente = binary_dilation(mascara_fondo, kernel_vertical)
+    fondo_con_muescas_horizontales = binary_erosion(fondo_dilatado_verticalmente, kernel_vertical)
+    fondo_dilatado_horizontalmente = binary_dilation(fondo_con_muescas_horizontales, kernel_horizontal)
+    fondo_con_muescas = binary_erosion(fondo_dilatado_horizontalmente, kernel_horizontal)
+
+    mascara_rectangulo = ~fondo_con_muescas
+    mascara_binaria = (mascara_rectangulo).astype(np.uint8) * 255
+    try:
+        contorno_simetrico = extraer_contorno_externo(mascara_binaria)
+    except ValueError:
+        mascara_original = (mascara).astype(np.uint8) * 255
+        # Fallback si la pieza no estaba recta
+        contorno_simetrico = extraer_contorno_externo(mascara_original)
+
+    return detectar_esquinas_de_pieza(contorno_simetrico)
+
+detect_jigsaw_corners = detectar_esquinas_de_pieza
+
+# endregion
 
 def pasar_borde_a_1d(
-    curva: np.ndarray,
+    puntos_contorno_borde: np.ndarray,
     nombre_lado: str = "NORTE",
-    num_muestras: int = 80,
 ) -> Dict[str, Any]:
     """
     Proyecta una curva 2D de contorno respecto a la recta que une sus extremos
     y extrae la señal 1D de desviación perpendicular.
     Clasifica el tipo de borde en: 'PLANO', 'SALIENTE' o 'ENTRANTE'.
     """
-    p0 = curva[0].astype(np.float32)
-    p1 = curva[-1].astype(np.float32)
-    vec = p1 - p0
-    length = float(np.linalg.norm(vec))
-    if length == 0:
+    cantidad_de_puntos = len(puntos_contorno_borde)
+
+    punto_inicio_borde = puntos_contorno_borde[0].astype(np.float32)
+    punto_final_borde = puntos_contorno_borde[-1].astype(np.float32)
+    
+    distancia = np.linalg.norm(punto_final_borde - punto_inicio_borde)
+    if distancia == 0:
         return {
             "type": "PLANO",
-            "profile": np.zeros(num_muestras, dtype=np.float32),
+            "profile": np.zeros(cantidad_de_puntos, dtype=np.float32),
             "norm": 0.0,
             "length": 0.0,
             "max_dev": 0.0,
             "mean_dev": 0.0,
         }
- 
-    u = vec / length
+
+    # El del norte es contrario porque cuando baja es mas grande, lo mismo oeste para la derecha.
     lado_u = nombre_lado.upper()
     if lado_u == "NORTE":
-        normal_unit = np.array([0.0, -1.0])
+        eje_de_movimento = np.array([0.0, -1.0])
     elif lado_u == "SUR":
-        normal_unit = np.array([0.0, 1.0])
+        eje_de_movimento = np.array([0.0, 1.0])
     elif lado_u == "OESTE":
-        normal_unit = np.array([-1.0, 0.0])
+        eje_de_movimento = np.array([-1.0, 0.0])
     elif lado_u == "ESTE":
-        normal_unit = np.array([1.0, 0.0])
+        eje_de_movimento = np.array([1.0, 0.0])
     else:
-        normal_unit = np.array([u[1], -u[0]], dtype=np.float32)
+        raise ValueError("Nombre de Borde no Valido")
+    
+    silueta_de_borde = puntos_contorno_borde.astype(np.float32) - punto_inicio_borde
+    cambio_profundidad_a_lo_largo_del_borde = np.dot(silueta_de_borde, eje_de_movimento)
  
-    rel = curva.astype(np.float32) - p0
-    dev = np.dot(rel, normal_unit)
+    maximo_cambio = np.max(np.abs(cambio_profundidad_a_lo_largo_del_borde))
+    desviacion_promedio = float(np.mean(cambio_profundidad_a_lo_largo_del_borde))
  
-    t_orig = np.linspace(0, 1, len(curva))
-    t_target = np.linspace(0, 1, num_muestras)
-    profile = np.interp(t_target, t_orig, dev).astype(np.float32)
- 
-    max_dev = float(np.max(np.abs(profile)))
-    mean_dev = float(np.mean(profile))
- 
-    if max_dev < length * 0.06:
-        stype = "PLANO"
-        profile = np.zeros(num_muestras, dtype=np.float32)
-    elif mean_dev > 0:
-        stype = "SALIENTE"
+    if maximo_cambio < distancia * 0.06:
+        tipo_de_borde = "PLANO"
+        cambio_profundidad_a_lo_largo_del_borde = np.zeros(cantidad_de_puntos, dtype=np.float32)
+    elif desviacion_promedio > 0:
+        tipo_de_borde = "SALIENTE"
     else:
-        stype = "ENTRANTE"
+        tipo_de_borde = "ENTRANTE"
  
-    norm = float(np.linalg.norm(profile))
+    norma_cambio_profundidad = float(np.linalg.norm(cambio_profundidad_a_lo_largo_del_borde))
     return {
-        "type": stype,
-        "profile": profile,
-        "norm": norm,
-        "length": length,
-        "max_dev": max_dev,
-        "mean_dev": mean_dev,
+        "type": tipo_de_borde,
+        "profile": cambio_profundidad_a_lo_largo_del_borde,
+        "norm": norma_cambio_profundidad,
+        "length": distancia,
+        "max_dev": maximo_cambio,
+        "mean_dev": desviacion_promedio,
     }
  
  
@@ -159,140 +253,158 @@ extraer_perfil_1d = pasar_borde_a_1d
 
 
 def _muestrear_color_curva(
-    curva: np.ndarray,
+    puntos_de_borde: np.ndarray,
     imagen_rgb: np.ndarray,
-    binary_mask: Optional[np.ndarray] = None,
-    num_samples: int = 80,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Interpola `num_samples` coordenadas a lo largo de `curva` y extrae el color RGB de `imagen_rgb`, 
-    garantizando que no se tomen píxeles negros del fondo.
-    Retorna (puntos_interpolados, color_profile).
+    Extrae el color RGB de `imagen_rgb` en el borde, 
     """
-    t_orig = np.linspace(0, 1, len(curva))
-    t_target = np.linspace(0, 1, num_samples)
-    x_pts = np.interp(t_target, t_orig, curva[:, 0])
-    y_pts = np.interp(t_target, t_orig, curva[:, 1])
+    coordenadas_x = puntos_de_borde[:, 0]
+    coordenadas_y = puntos_de_borde[:, 1]
  
-    h, w = imagen_rgb.shape[:2]
-    pts_interp = np.column_stack([x_pts, y_pts]).astype(np.float32)
- 
-    colores = []
-    for x, y in zip(x_pts, y_pts):
-        xi = int(np.clip(round(x), 0, w - 1))
-        yi = int(np.clip(round(y), 0, h - 1))
- 
-        #Si el píxel cae justo en el fondo negro por redondeo, buscar en vecindad 3x3
-        if binary_mask is not None and binary_mask[yi, xi] == 0:
-            found = False
-            for dy in (-1, 0, 1):
-                for dx in (-1, 0, 1):
-                    ny, nx = yi + dy, xi + dx
-                    if 0 <= ny < h and 0 <= nx < w and binary_mask[ny, nx] > 0:
-                        yi, xi = ny, nx
-                        found = True
-                        break
-                if found:
-                    break
- 
-        colores.append(imagen_rgb[yi, xi])
- 
-    color_arr = np.asarray(colores, dtype=np.float32)
-    return pts_interp, color_arr
- 
- 
-_SIDE_CACHE = {}
+    ccolor_arr = imagen_rgb[coordenadas_y, coordenadas_x].astype(np.float32)
+    return ccolor_arr
 
+ 
+def encontra_indice_de_punto_en_arreglo_puntos(puntos, punto):
+    d = np.sum((puntos - punto) ** 2, axis=1)
+    return int(np.argmin(d))
+
+def recoger_border_recorriendo_entre_puntos(contorno, idx_primer_esquina, idx_segunda_esquina, idx_tercer_esquina):
+
+    primer_punto = contorno[0:1]
+
+    borde_1 = contorno[0 : idx_primer_esquina + 1]
+    borde_2 = contorno[idx_primer_esquina : idx_segunda_esquina + 1]
+    borde_3 = contorno[idx_segunda_esquina : idx_tercer_esquina + 1][::-1]
+
+    borde_4_sin_inicio = contorno[idx_tercer_esquina:] 
+    borde_4 = np.vstack([borde_4_sin_inicio, primer_punto])
+    borde_4 = borde_4[::-1]
+
+    return borde_1, borde_2, borde_3, borde_4
 
 def detect_corners_and_split_sides(
     contour_pts: np.ndarray,
     binary_mask: Optional[np.ndarray] = None,
-    num_samples: int = 80,
     imagen_rgb: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     """
     Segmenta el contorno en los 4 lados orientados (NORTE, ESTE, SUR, OESTE)
     y calcula la señal 1D de desviación perpendicular.
     """
-    c_tl, c_tr, c_br, c_bl = detect_jigsaw_corners(contour_pts)
+
+    binary_mask_booleana = binary_mask > 0
+    esquina_top_left, esquina_top_right, esquina_bottom_right, esquina_bottom_left = detectar_esquinas_de_pieza_desde_mascara(binary_mask_booleana)
  
-    def get_idx(pt):
-        d = np.sum((contour_pts - pt) ** 2, axis=1)
-        return int(np.argmin(d))
+    idx_top_left = encontra_indice_de_punto_en_arreglo_puntos(contour_pts, esquina_top_left)
+    
+    # Suponemos que la lista sigue un orden entre punto a punto
+    # Centramos la lista empezando desde la esquina superior izquierda
+    contorno_desde_esquina_top_left = np.roll(contour_pts, -idx_top_left, axis=0)
+
+    idx_top_right = encontra_indice_de_punto_en_arreglo_puntos(contorno_desde_esquina_top_left, esquina_top_right)
+    idx_bottom_right = encontra_indice_de_punto_en_arreglo_puntos(contorno_desde_esquina_top_left, esquina_bottom_right)
+    idx_bottom_left = encontra_indice_de_punto_en_arreglo_puntos(contorno_desde_esquina_top_left, esquina_bottom_left)
  
-    i_tl = get_idx(c_tl)
-    i_tr = get_idx(c_tr)
-    i_br = get_idx(c_br)
-    i_bl = get_idx(c_bl)
- 
-    n = len(contour_pts)
-    shifted = np.roll(contour_pts, -i_tl, axis=0)
-    i_tr_s = (i_tr - i_tl) % n
-    i_br_s = (i_br - i_tl) % n
-    i_bl_s = (i_bl - i_tl) % n
- 
-    if i_bl_s < i_tr_s:
+    if idx_bottom_left < idx_top_right:
         # Recorrido antihorario
-        curve_w = shifted[0 : i_bl_s + 1]
-        curve_s = shifted[i_bl_s : i_br_s + 1]
-        curve_e = shifted[i_br_s : i_tr_s + 1][::-1]
-        curve_n = np.vstack([shifted[i_tr_s:], shifted[0:1]])[::-1]
+        bordes = recoger_border_recorriendo_entre_puntos(contorno_desde_esquina_top_left, idx_bottom_left, idx_bottom_right, idx_top_right)
+        silueta_borde_oeste = bordes[0]
+        silueta_borde_sur = bordes[1]
+        silueta_borde_este = bordes[2]
+        silueta_borde_norte = bordes[3]
     else:
         # Recorrido horario
-        curve_n = shifted[0 : i_tr_s + 1]
-        curve_e = shifted[i_tr_s : i_br_s + 1]
-        curve_s = shifted[i_br_s : i_bl_s + 1][::-1]
-        curve_w = np.vstack([shifted[i_bl_s:], shifted[0:1]])[::-1]
+        bordes = recoger_border_recorriendo_entre_puntos(contorno_desde_esquina_top_left, idx_top_right, idx_bottom_right, idx_bottom_left)
+        silueta_borde_norte = bordes[0]
+        silueta_borde_este = bordes[1]
+        silueta_borde_sur = bordes[2]
+        silueta_borde_oeste = bordes[3]
  
-    info_n = pasar_borde_a_1d(curve_n, "NORTE", num_muestras=num_samples)
-    info_e = pasar_borde_a_1d(curve_e, "ESTE", num_muestras=num_samples)
-    info_s = pasar_borde_a_1d(curve_s, "SUR", num_muestras=num_samples)
-    info_w = pasar_borde_a_1d(curve_w, "OESTE", num_muestras=num_samples)
+    informacion_silueta_norte = pasar_borde_a_1d(silueta_borde_norte, "NORTE")
+    informacion_silueta_este = pasar_borde_a_1d(silueta_borde_este, "ESTE")
+    informacion_silueta_sur = pasar_borde_a_1d(silueta_borde_sur, "SUR")
+    informacion_silueta_oeste = pasar_borde_a_1d(silueta_borde_oeste, "OESTE")
+
+    descriptor_borde_norte = (silueta_borde_norte, informacion_silueta_norte) 
+    descriptor_borde_este = (silueta_borde_este, informacion_silueta_este)
+    descriptor_borde_sur = (silueta_borde_sur, informacion_silueta_sur)
+    descriptor_borde_oeste = (silueta_borde_oeste, informacion_silueta_oeste)
  
     #Perfil de color a lo largo de cada costura
     #Sigue la CURVA del encastre, no una columna recta: por eso hace falta la imagen ademas del contorno.
     if imagen_rgb is not None:
-        for nombre_lado, curva, info in (("NORTE", curve_n, info_n), ("ESTE", curve_e, info_e),
-                                         ("SUR", curve_s, info_s), ("OESTE", curve_w, info_w)):
-            puntos, colores = _muestrear_color_curva(curva, imagen_rgb, binary_mask, num_samples)
-            info["color_profile"] = colores
-            info["curve"] = puntos
+        for curva, informacion in [descriptor_borde_norte, descriptor_borde_este, descriptor_borde_sur, descriptor_borde_oeste]:
+            colores = _muestrear_color_curva(curva, imagen_rgb)
+            informacion["color_profile"] = colores
+            informacion["curve"] = curva
  
-    types = [info_n["type"], info_e["type"], info_s["type"], info_w["type"]]
-    num_flat = sum(1 for t in types if t == "PLANO")
-    topology = "CORNER" if num_flat == 2 else ("BORDER" if num_flat == 1 else "INTERIOR")
-    tipo_pieza = "ESQUINA" if num_flat == 2 else ("LADO" if num_flat == 1 else "INTERIOR")
+    lista_tipos_bordes = [informacion_silueta_norte["type"], informacion_silueta_este["type"], informacion_silueta_sur["type"], informacion_silueta_oeste["type"]]
+    cantidad_bordes_planos = sum(1 for tipo_borde in lista_tipos_bordes if tipo_borde == "PLANO")
+
+    if cantidad_bordes_planos == 2:
+        tipo_pieza = "ESQUINA"
+    elif cantidad_bordes_planos == 1:
+        tipo_pieza = "LADO"
+    else:
+        tipo_pieza = "INTERIOR"
  
     return {
-        "NORTE": info_n,
-        "ESTE": info_e,
-        "SUR": info_s,
-        "OESTE": info_w,
-        "topology": topology,
+        "NORTE": informacion_silueta_norte,
+        "ESTE": informacion_silueta_este,
+        "SUR": informacion_silueta_sur,
+        "OESTE": informacion_silueta_oeste,
         "tipo_pieza": tipo_pieza,
-        "num_flat": num_flat,
-        "num_planos": num_flat,
-        "corners": {"TL": c_tl, "TR": c_tr, "BR": c_br, "BL": c_bl},
+        "num_flat": cantidad_bordes_planos,
+        "num_planos": cantidad_bordes_planos,
+        "corners": {"TL": esquina_top_left, "TR": esquina_top_right, "BR": esquina_bottom_right, "BL": esquina_bottom_left},
     }
- 
- 
-#Alias en español para el trabajo práctico de los estudiantes
-segmentar_lados_pieza = detect_corners_and_split_sides
-segmentar_borde_en_4 = detect_corners_and_split_sides
 
+# Caché para no recalcular la forma de la misma pieza repetidamente
+_SHAPE_CACHE = {}
 
-def analyze_piece_shape(img: np.ndarray) -> Dict[str, Any]:
+def get_cache_id(pieza: np.ndarray):
+    # hasheamos los bytes del array
+    originally_writeable = pieza.flags.writeable
+    try:
+        pieza.flags.writeable = False
+        return hash((pieza.data.tobytes(), pieza.shape, pieza.dtype))
+    finally:
+        pieza.flags.writeable = originally_writeable
+
+def analyze_piece_shape(pieza: np.ndarray) -> Dict[str, Any]:
     """Analiza la silueta morfológica de una pieza."""
-    binary = binarize_piece(img)
-    contour = extract_external_contour(binary)
-    sides_info = detect_corners_and_split_sides(contour, binary, imagen_rgb=img)
-    return {
+    global _SHAPE_CACHE
+
+    #Verificamos el cache primero
+    cache_id = get_cache_id(pieza)
+
+    if cache_id is not None and cache_id in _SHAPE_CACHE:
+        return _SHAPE_CACHE[cache_id]
+
+    if len(_SHAPE_CACHE) > 2000:
+        _SHAPE_CACHE.clear()
+
+    binary = generar_mascara_de_pieza(pieza)
+    contour = extraer_contorno_externo(binary)
+    sides_info = detect_corners_and_split_sides(contour, binary, imagen_rgb=pieza)
+
+    resultado = {
         "binary_mask": binary,
         "contour": contour,
         "sides": sides_info,
-        "topology": sides_info["topology"],
+        "topology": sides_info["tipo_pieza"],
     }
 
+    if cache_id is not None:
+        _SHAPE_CACHE[cache_id] = resultado
+
+    return resultado
+
+#Alias en español para el trabajo práctico de los estudiantes
+segmentar_borde_en_4 = detect_corners_and_split_sides
+analizar_silueta_de_pieza = analyze_piece_shape 
 
 def compute_edge_correlation(side_a: Dict[str, Any], side_b: Dict[str, Any]) -> float:
     """
@@ -314,36 +426,40 @@ def compute_jigsaw_shape_compatibility(side_a: Dict[str, Any], side_b: Dict[str,
     """
     raise NotImplementedError(_MSG_EJERCICIO)
 
+def indices_interpolacion_entre_dos_bordes(silueta_a, silueta_b):
+    n_samples = min(silueta_a.shape[0], silueta_b.shape[0])
+    idx_a = np.linspace(0, silueta_a.shape[0] - 1, n_samples).astype(int)
+    idx_b = np.linspace(0, silueta_b.shape[0] - 1, n_samples).astype(int)
 
-def calcular_mse_color_bordes(side_a: Dict[str, Any], side_b: Dict[str, Any]) -> float:
+    return idx_a, idx_b
+
+def interpolar_valores_bordes(valores_silueta_a, valores_silueta_b):
+    if valores_silueta_a.shape[0] != valores_silueta_b.shape[0]:
+        idx_a, idx_b = indices_interpolacion_entre_dos_bordes(valores_silueta_a, valores_silueta_b)
+        valores_a_interpolados = valores_silueta_a[idx_a]
+        valores_b_interpolados = valores_silueta_b[idx_b]
+    else:
+        valores_a_interpolados = valores_silueta_a
+        valores_b_interpolados = valores_silueta_b
+
+    return valores_a_interpolados, valores_b_interpolados 
+
+def calcular_mse_color_bordes(informacion_borde_a: Dict[str, Any], informacion_borde_b: Dict[str, Any]) -> float:
     """
     Calcula el Error Cuadrático Medio (MSE) entre los perfiles de color de dos bordes enfrentados.
     Los perfiles corren orientados en el mismo sentido a lo largo de la costura.
     """
-    col_a = side_a.get("color_profile")
-    col_b = side_b.get("color_profile")
-    if col_a is None or col_b is None:
+    color_a = informacion_borde_a.get("color_profile")
+    color_b = informacion_borde_b.get("color_profile")
+    if color_a is None or color_b is None:
         return 0.0
- 
-    diff = col_a - col_b
-    return float(np.mean(diff ** 2))
 
+    if color_a.shape[0] != color_b.shape[0]:
+        idx_a, idx_b = indices_interpolacion_entre_dos_bordes(color_a, color_b)
+        color_a = color_a[idx_a]
+        color_b = color_b[idx_b]
 
-# Caché para no recalcular la forma de la misma pieza repetidamente
-_SHAPE_CACHE = {}
-
-
-def _get_cached_shape(pieza: np.ndarray, cache_id: Optional[int] = None) -> Dict[str, Any]:
-    global _SHAPE_CACHE
-    if cache_id is not None and cache_id in _SHAPE_CACHE:
-        return _SHAPE_CACHE[cache_id]
-    if len(_SHAPE_CACHE) > 2000:
-        _SHAPE_CACHE.clear()
-    shape_info = analyze_piece_shape(pieza)
-    if cache_id is not None:
-        _SHAPE_CACHE[cache_id] = shape_info
-    return shape_info
-
+    return float(np.mean((color_a - color_b)**2))
 
 def compatibilidad_forma(
     pieza_a: np.ndarray,
