@@ -255,7 +255,7 @@ extraer_perfil_1d = pasar_borde_a_1d
 def _muestrear_color_curva(
     puntos_de_borde: np.ndarray,
     imagen_rgb: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> np.ndarray:
     """
     Extrae el color RGB de `imagen_rgb` en el borde, 
     """
@@ -286,7 +286,7 @@ def recoger_border_recorriendo_entre_puntos(contorno, idx_primer_esquina, idx_se
 
 def detect_corners_and_split_sides(
     contour_pts: np.ndarray,
-    binary_mask: Optional[np.ndarray] = None,
+    binary_mask: np.ndarray,
     imagen_rgb: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     """
