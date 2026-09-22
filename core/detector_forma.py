@@ -403,7 +403,7 @@ def analyze_piece_shape(pieza: np.ndarray) -> Dict[str, Any]:
     return resultado
 
 #Alias en español para el trabajo práctico de los estudiantes
-segmentar_borde_en_4 = detect_corners_and_split_sides
+segmentar_borde_en_4 = analyze_piece_shape
 analizar_silueta_de_pieza = analyze_piece_shape 
 
 def compute_edge_correlation(side_a: Dict[str, Any], side_b: Dict[str, Any]) -> float:
