@@ -25,3 +25,8 @@ ENV/
 *.swp
 experiments/*
 rompecabezas_tp/*
+rompecabezas/*
+tests/*
+TP_Rompecabezas_Colab_respuesta.ipynb
+TP_Rompecabezas_Colab_V2_ejercicios_secciones_solucion.ipynb
+TP_Rompecabezas_Colab_V2_respuesta.ipynb

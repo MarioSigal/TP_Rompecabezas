@@ -359,6 +359,10 @@ class ReconstructorRompecabezas:
                 costo_inicial = 0.0
             else:
                 pieza_a, pieza_b = semilla
+
+                assert pieza_a is not None
+                assert pieza_b is not None
+
                 self._colocar_pieza(self.fila_centro, self.columna_centro, pieza_a, costo=0.0)
                 costo_inicial = float(self.afinidad_horizontal[pieza_a, pieza_b])
                 self._colocar_pieza(self.fila_centro, self.columna_centro + 1, pieza_b, costo_inicial)
@@ -383,6 +387,8 @@ class ReconstructorRompecabezas:
                     mejor_costo_global = costo_final
                     mejor_grilla_global = self._recortar_al_bounding_box(self.tablero, self.limites)
                     mejor_camino_global = self._traducir_historial(self.camino_actual, self.limites)
+
+        assert mejor_grilla_global is not None
 
         self.grilla_resultado = mejor_grilla_global
         self.costo_total = mejor_costo_global
@@ -416,7 +422,6 @@ def reconstruir_desde_afinidades(
     if devolver_reconstructor:
         return grilla, reconstructor
     return grilla
-
 
 def reconstruir_rompecabezas(
     piezas: List[np.ndarray],

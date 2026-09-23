@@ -73,12 +73,10 @@ from .reconstructor import (
 )
 from .crear_rompecabezas import (
     Rompecabezas,
-    cortar_imagen_en_piezas,
     barajar_piezas,
     pegar_piezas,
     armar_caso_rompecabezas,
     crear_rompecabezas_nivel,
-    crear_dataset_desafio_30,
 )
 
 __all__ = [
@@ -86,11 +84,10 @@ __all__ = [
     "cargar_imagen", "guardar_imagen", "preparar_imagen_base", "asegurar_rgb_float", "float_a_uint8",
     # Degradaciones
     "agregar_ruido_gaussiano", "agregar_ruido_uniforme", "agregar_ruido_rayleigh", "agregar_ruido_sal_y_pimienta",
-    "rotar_matiz", "alterar_valor", "VARIANTES_CROMATICAS", "DegradacionCromaticaPorPieza",
-    "agregar_onda", "agregar_ondas", "agregar_producto_de_ondas", "TIPOS_DE_TRAMA", "TramaMixtaPorPieza",
+    "agregar_onda", "agregar_ondas", "TIPOS_DE_TRAMA", "TramaMixtaPorPieza",
     "componer_degradaciones",
     # Jigsaw
-    "generate_tab_curve", "JigsawGridGeometry",
+    "JigsawGridGeometry",
     # Forma
     "generar_mascara_de_pieza", "extraer_contorno_externo", "detectar_esquinas_de_pieza", "detect_corners_and_split_sides",
     "segmentar_borde_en_4", "pasar_borde_a_1d", "extraer_perfil_1d", "analyze_piece_shape",
@@ -105,5 +102,5 @@ __all__ = [
     # Reconstructor
     "CELDA_VACIA", "ReconstructorRompecabezas", "reconstruir_desde_afinidades", "reconstruir_rompecabezas",
     # Generador
-    "Rompecabezas", "cortar_imagen_en_piezas", "barajar_piezas", "pegar_piezas", "armar_caso_rompecabezas", "crear_rompecabezas_nivel", "crear_dataset_desafio_30",
+    "Rompecabezas", "barajar_piezas", "pegar_piezas", "armar_caso_rompecabezas", "crear_rompecabezas_nivel",
 ]

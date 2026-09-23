@@ -12,15 +12,13 @@ import numpy as np
 from skimage.filters import sobel_v, sobel_h
 from skimage.color import rgb2ycbcr
 from core.detector_forma import _SHAPE_CACHE
+from core.RompecabezasV2 import Pieza
 
 __all__ = [
     "LADOS",
     "BORDES_ENFRENTADOS",
     "extraer_banda_borde",
     "compatibilidad_baseline",
-    "compatibilidad_gradiante",
-    "compatibilidad_kl",
-    "compatibilidad_baseline_kl",
     "limpiar_cache",
     "construir_matrices_afinidad",
 ]
@@ -150,6 +148,69 @@ def construir_matrices_afinidad(
     #de objeto python se haya reciclado para alguna pieza de esta lista (ver
     #_ajustar_gaussiana_borde). Barato si el cache no aplica a la funcion usada.
     limpiar_cache()
+
+    cantidad_piezas = len(piezas)
+    matriz_horizontal = np.zeros((cantidad_piezas, cantidad_piezas), dtype=np.float64)
+    matriz_vertical = np.zeros((cantidad_piezas, cantidad_piezas), dtype=np.float64)
+
+    for i in range(cantidad_piezas):
+        pieza_a = piezas[i]
+        for j in range(cantidad_piezas):
+            if i == j:
+                continue
+            pieza_b = piezas[j]
+
+            costo_h = funcion_compatibilidad(pieza_a, pieza_b, "horizontal")
+            costo_v = funcion_compatibilidad(pieza_a, pieza_b, "vertical")
+
+            matriz_horizontal[i, j] = costo_h
+            matriz_vertical[i, j] = costo_v
+
+    np.fill_diagonal(matriz_horizontal, np.inf)
+    np.fill_diagonal(matriz_vertical, np.inf)
+
+    return {
+        "horizontal": matriz_horizontal,
+        "vertical": matriz_vertical,
+    }
+
+def compatibilidad_baseline_por_pieza(
+    pieza_a: Pieza,
+    pieza_b: Pieza,
+    relacion: str,
+) -> float:
+    if relacion not in BORDES_ENFRENTADOS:
+        raise ValueError(f"Relación inválida: '{relacion}'. Se espera 'horizontal' o 'vertical'.")
+
+    lado_a, lado_b = BORDES_ENFRENTADOS[relacion]
+    banda_a = pieza_a.calcular_borde_color(lado_a)
+    banda_b = pieza_b.calcular_borde_color(lado_b)
+
+    if banda_a.shape[0] != banda_b.shape[0]:
+        n_samples = min(banda_a.shape[0], banda_b.shape[0])
+        idx_a = np.linspace(0, banda_a.shape[0] - 1, n_samples).astype(int)
+        idx_b = np.linspace(0, banda_b.shape[0] - 1, n_samples).astype(int)
+        banda_a = banda_a[idx_a]
+        banda_b = banda_b[idx_b]
+
+    return float(np.linalg.norm(banda_a - banda_b)**2)
+
+
+def construir_matrices_afinidad_desde_piezas(
+    piezas: List[Pieza],
+    funcion_compatibilidad: Callable[[Pieza, Pieza, str], float] = compatibilidad_baseline_por_pieza,
+) -> Dict[str, np.ndarray]:
+    """
+    Construye las matrices de costo para todos los pares ordenados de piezas
+    usando la función de compatibilidad suministrada.
+
+    Retorna:
+        dict: {
+            'horizontal': ndarray (N, N) donde matriz[a, b] es el costo de poner B a la derecha de A,
+            'vertical': ndarray (N, N) donde matriz[a, b] es el costo de poner B abajo de A
+        }
+        La diagonal siempre contiene np.inf.
+    """
 
     cantidad_piezas = len(piezas)
     matriz_horizontal = np.zeros((cantidad_piezas, cantidad_piezas), dtype=np.float64)

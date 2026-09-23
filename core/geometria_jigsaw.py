@@ -4,7 +4,9 @@ Genera curvas bezier y analíticas continuas entre fichas adyacentes tipo Jigsaw
 """
 
 from typing import Dict, List, Tuple, Any, Optional
+from core.tipos import BoolArray
 import numpy as np
+from dataclasses import dataclass
 import cv2
 
 
@@ -21,6 +23,15 @@ TABLA_BORDES_DISCRETOS = {
 }
 
 __all__ = ["JigsawGridGeometry", "TABLA_BORDES_DISCRETOS"]
+
+@dataclass
+class DescriptorGeometria:
+    borde_norte: np.ndarray
+    borde_sur: np.ndarray
+    borde_este: np.ndarray
+    borde_oeste: np.ndarray
+    punto_inicial: np.ndarray
+    dimensiones_base: tuple[int, int]
 
 
 class JigsawGridGeometry:
@@ -128,6 +139,9 @@ class JigsawGridGeometry:
             silueta_gaussiana = 0
         return float(silueta_gaussiana)
 
+    def _generar_siluesta_borde(self):
+        return float(0)
+
     def _generar_silueta_por_tipo(self, prof: str, distacia_al_centro_de_la_muesca: float) -> float:
         #Desplazamiento perpendicular normalizado segun el perfil del encastre
 
@@ -137,6 +151,8 @@ class JigsawGridGeometry:
             return self._generar_silueta_ancha(distacia_al_centro_de_la_muesca)
         elif prof == "gaussian":
             return self._generar_siluesta_gaussiana(distacia_al_centro_de_la_muesca)
+        elif prof == "borde":
+            return self._generar_siluesta_borde()
         else:
             raise ValueError("Tipo No Valido")
 
@@ -351,13 +367,31 @@ class JigsawGridGeometry:
         # Doy vuelta sur y oeste para que empiezen de deracha a izquierda y de abajo hacia arriba
         return np.vstack([edges["NORTE"], edges["ESTE"], np.flip(edges["SUR"], axis=0), np.flip(edges["OESTE"], axis=0)])
 
+    def _bounding_box_poligono(self, poligono_silueta: np.ndarray):
+        x_inicio_silueta = int(np.min(poligono_silueta[:, 0]))
+        x_fin_silueta = int(np.max(poligono_silueta[:, 0])) + 1
+
+        y_inicio_silueta = int(np.min(poligono_silueta[:, 1]))
+        y_fin_silueta = int(np.max(poligono_silueta[:, 1])) + 1
+
+        return x_inicio_silueta, x_fin_silueta, y_inicio_silueta, y_fin_silueta
+
+    def _dimensiones_poligono(self, poligono_silueta: np.ndarray):
+        x_inicio_silueta, x_fin_silueta, y_inicio_silueta, y_fin_silueta = self._bounding_box_poligono(poligono_silueta)
+        ancho_silueta = x_fin_silueta - x_inicio_silueta
+        alto_silueta = y_fin_silueta - y_inicio_silueta
+
+        return ancho_silueta, alto_silueta
+
+
     def extract_piece_image(
         self,
         full_image: np.ndarray,
         fila: int,
         columna: int,
         padding: int = 35,
-    ) -> Tuple[np.ndarray, np.ndarray, Tuple[int, int]]:
+        anular_pixeles_fuera_mascara = True
+    ) -> Tuple[np.ndarray, BoolArray, Tuple[int, int]]:
         """
         Recorta la pieza correspondiente a (r, c) con su forma real de encastre sobre fondo negro (0, 0, 0).
         Soporta arrays float64 [0, 1] y uint8.
@@ -370,31 +404,26 @@ class JigsawGridGeometry:
         poligono_silueta_pieza = self.get_piece_polygon(fila, columna)
         poligono_silueta_pieza = np.round(poligono_silueta_pieza).astype(np.int32)
 
-        x_inicio_silueta = np.min(poligono_silueta_pieza[:, 0])
-        x_fin_silueta = np.max(poligono_silueta_pieza[:, 0]) + 1
+        x_inicio_silueta, x_fin_silueta, y_inicio_silueta, y_fin_silueta = self._bounding_box_poligono(poligono_silueta_pieza)
 
-        y_inicio_silueta = np.min(poligono_silueta_pieza[:, 1])
-        y_fin_silueta = np.max(poligono_silueta_pieza[:, 1]) + 1
+        ancho_silueta, alto_silueta = self._dimensiones_poligono(poligono_silueta_pieza)
 
-        ancho_silueta = x_fin_silueta - x_inicio_silueta
-        alto_silueta = y_fin_silueta - y_inicio_silueta
-        
         # Lo hago siempre par para evitar problemas
         if padding % 2 != 0:
             padding += 1
 
         ancho_silueta_padded = ancho_silueta + padding
         alto_silueta_padded = alto_silueta + padding
-        offset = padding // 2
 
         canales = full_image.shape[2] if full_image.ndim == 3 else 1
         pieza_recortada = np.zeros((alto_silueta_padded, ancho_silueta_padded, canales), dtype=full_image.dtype)
+
         mascara = np.zeros((alto_silueta_padded, ancho_silueta_padded), dtype=np.uint8)
         
-        # esto es igual al padding
-        x_inicio_imagen_destino = offset
+        offset = padding // 2
+        x_inicio_imagen_destino = int(offset)
         x_fin_imagen_destino = x_inicio_imagen_destino + ancho_silueta
-        y_inicio_imagen_destino = offset
+        y_inicio_imagen_destino = int(offset)
         y_fin_imagen_destino = y_inicio_imagen_destino + alto_silueta
 
         if not (x_fin_silueta > x_inicio_silueta) or not (y_fin_silueta > y_inicio_silueta):
@@ -417,8 +446,32 @@ class JigsawGridGeometry:
         poligono_mascara[:, 1] += offset
 
         cv2.fillPoly(mascara, [poligono_mascara], 255)
+        mascara = mascara == 255
 
-        for canal in range(canales):
-            pieza_recortada[:, :, canal] = np.where(mascara > 0, pieza_recortada[:, :, canal], 0)
+        if anular_pixeles_fuera_mascara:
+            for canal in range(canales):
+                pieza_recortada[:, :, canal] = np.where(mascara, pieza_recortada[:, :, canal], 0)
 
         return pieza_recortada, mascara, (x_inicio_silueta, y_inicio_silueta)
+
+    def extraer_geometria_por_pieza(
+        self,
+        fila: int,
+        columna: int,
+    ) -> DescriptorGeometria:
+
+        muescas_por_borde = self.get_piece_edges(fila, columna)
+        coordenada_x_esquina = columna * self.ancho_pieza
+        coordenada_y_esquina = fila * self.altura_pieza
+
+        descriptor_geometria = DescriptorGeometria(
+            muescas_por_borde["NORTE"],
+            muescas_por_borde["SUR"],
+            muescas_por_borde["ESTE"],
+            muescas_por_borde["OESTE"],
+            np.asarray([coordenada_x_esquina, coordenada_y_esquina]),
+            (self.ancho_pieza, self.altura_pieza)
+        )
+
+        return descriptor_geometria
+

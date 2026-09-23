@@ -2,6 +2,8 @@ import numpy as np
 from skimage import color
 from core.analizador_rotacion import enderezar_pieza
 from core.geometria_jigsaw import MINIMO_CONTENIDO_MASCARA_FLOAT, MINIMO_CONTENIDO_MASCARA_INT
+from typing import Optional
+from core.tipos import BoolArray, ActualizacionDePieza
 
 __all__ = [
     "agregar_ruido_gaussiano",
@@ -17,7 +19,6 @@ __all__ = [
     "sortear_variante_nivel2",
     "agregar_onda",
     "agregar_ondas",
-    "agregar_producto_de_ondas",
     "TIPOS_DE_TRAMA",
     "TramaMixtaPorPieza",
 ]
@@ -26,7 +27,7 @@ def _acotar_rango(imagen: np.ndarray) -> np.ndarray:
     """Acota los valores de la imagen al rango válido [0.0, 1.0]."""
     return np.clip(imagen, 0.0, 1.0)
 
-def _aplicar_invariante_de_mascara(imagen,mascara):
+def _aplicar_invariante_de_mascara(imagen:np.ndarray, mascara: BoolArray):
 
     imagen[~mascara] = 0
     
@@ -199,7 +200,7 @@ class DegradacionPorPiezaNivel2:
         return "luminancia" if generador.random() < 0.5 else "crominancia"
  
  
-    def __call__(self, pieza, indice, generador, mascara=None):
+    def __call__(self, pieza: np.ndarray, indice: int, generador: np.random.Generator, mascara:Optional[BoolArray]=None) -> ActualizacionDePieza:
         le_toca = self._que_le_toca(indice, generador)
  
         if le_toca == "luminancia":
@@ -337,7 +338,7 @@ class TramaMixtaPorPieza:
         self.amplitud_maxima = amplitud_maxima
         self.parametros_por_pieza = {}
 
-    def __call__(self, pieza, indice, generador, mascara = None):
+    def __call__(self, pieza:np.ndarray, indice:int, generador:np.random.Generator, mascara: Optional[BoolArray] = None) -> ActualizacionDePieza:
         tipo = str(generador.choice(self.tipos))
         amplitud = float(generador.uniform(self.amplitud_minima, self.amplitud_maxima))
 
@@ -374,7 +375,7 @@ class TramaMixtaPorPieza:
 # region Degradacion Nivel 5
 
 class DegradacionAgregarFrecuenciaUnicaPorPieza:
-    def __init__(self, desplazamiento_fila, desplazamiento_columna, amplitud=10):
+    def __init__(self, desplazamiento_fila, desplazamiento_columna, amplitud:float=10):
         self.desplazamiento_fila = desplazamiento_fila
         self.desplazamiento_columna = desplazamiento_columna
         self.amplitud = amplitud
@@ -476,7 +477,7 @@ class DegradacionPorPiezaRotacion:
 
         return padding_faltante
 
-    def __call__(self, pieza, indice, generador, mascara = None):
+    def __call__(self, pieza:np.ndarray, indice: int, generador: np.random.Generator, mascara: Optional[BoolArray] = None) -> ActualizacionDePieza:
 
         if self.fake_jitter == None:
             jitter = float(generador.uniform(5.0, 60.0))
@@ -487,7 +488,11 @@ class DegradacionPorPiezaRotacion:
         # aunque no tengo una originalmente, ya que enderar_pieza siempre devuelve una mascara
         # que espera que el invariante sea verdadero
         if mascara is None:
-            mascara = np.ones((pieza.shape[0], pieza.shape[1])) == 1
+            mascara = (np.ones((pieza.shape[0], pieza.shape[1])) == 1)
+
+        # Me volvi fan de dependencia de tipos en python
+        # long live Pyright
+        assert mascara is not None
     
         pieza =_aplicar_invariante_de_mascara(pieza, mascara)
         mascara_numerica = (mascara).astype(np.uint8) * 255
@@ -520,7 +525,7 @@ class DegradacionPorPiezaRotacionYLineasAlMismoAngulo:
         self.amplitud = amplitud
         self.parametros_por_pieza = {}
 
-    def __call__(self, pieza, indice, generador, mascara = None):
+    def __call__(self, pieza:np.ndarray, indice:int, generador:np.random.Generator, mascara:Optional[BoolArray] = None) -> ActualizacionDePieza:
         pieza_rotada, mascara_rotada = self.degradador_por_rotacion(pieza, indice, generador, mascara)
         angulo_de_rotacion = self.degradador_por_rotacion.parametros_por_pieza[indice]["jitter"]
 

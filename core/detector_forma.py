@@ -10,7 +10,8 @@ Permite:
 from typing import Dict, List, Tuple, Any, Optional
 from core.geometria_jigsaw import MINIMO_CONTENIDO_MASCARA_FLOAT, MINIMO_CONTENIDO_MASCARA_INT
 import numpy as np
-from skimage.morphology import binary_erosion, binary_dilation, binary_closing, disk
+from skimage.morphology.binary import binary_erosion, binary_dilation, binary_closing
+from skimage.morphology import disk
 import cv2
 
 __all__ = [
@@ -53,6 +54,10 @@ binarize_piece = generar_mascara_de_pieza
 def extraer_contorno_externo(mascara_binaria: np.ndarray) -> np.ndarray:
     """Extrae el contorno exterior principal de mayor área."""
 
+    # cv2.findContours no acepta arrays booleanos de numpy, solo uint8
+    if mascara_binaria.dtype == bool:
+        mascara_binaria = mascara_binaria.astype(np.uint8) * 255
+
     # Devuelve una cadena de puntos que son el contorno
     contorno, _ = cv2.findContours(mascara_binaria, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
@@ -70,58 +75,61 @@ extract_external_contour = extraer_contorno_externo
 
 # region encontrar_esquinas
 
-def _punto_en_mitad_izquierda(punto, centro_silueta_x):
-    return punto[0] <= centro_silueta_x
-
-def _punto_en_mitad_derecha(punto, centro_silueta_x):
-    return punto[0] >= centro_silueta_x
-
-def _punto_en_mitad_superior(punto, centro_silueta_y):
-    return punto[1] <= centro_silueta_y
-
-def _punto_en_mitad_inferior(punto, centro_silueta_y):
-    return punto[1] >= centro_silueta_y
-
-def _punto_a_la_izquierda_y_por_encima(punto, centro_silueta_x, centro_silueta_y):
-    return _punto_en_mitad_izquierda(punto, centro_silueta_x) and _punto_en_mitad_superior(punto, centro_silueta_y)
-
-def _punto_a_la_derecha_y_por_encima(punto, centro_silueta_x, centro_silueta_y):
-    return _punto_en_mitad_derecha(punto, centro_silueta_x) and _punto_en_mitad_superior(punto, centro_silueta_y)
-
-def _punto_a_la_izquierda_y_por_debajo(punto, centro_silueta_x, centro_silueta_y):
-    return _punto_en_mitad_izquierda(punto, centro_silueta_x) and _punto_en_mitad_inferior(punto, centro_silueta_y)
-
-def _punto_a_la_derecha_y_por_debajo(punto, centro_silueta_x, centro_silueta_y):
-    return _punto_en_mitad_derecha(punto, centro_silueta_x) and _punto_en_mitad_inferior(punto, centro_silueta_y)
-
 def _distacia_a_punto(punto, punto_referencia):
     return (punto[0] - punto_referencia[0]) ** 2 + (punto[1] - punto_referencia[1]) ** 2
 
 def _encontrar_punto_mas_cercano_a_otro(puntos, punto_referencia):
     return min(puntos, key=lambda punto: _distacia_a_punto(punto, punto_referencia))
 
-def _encontrar_punto_esquina(puntos_contorno, filtro_cuadrante, coordenada_esquina_absoluta):
-    mid_x, mid_y = np.mean(puntos_contorno, axis=0)
-    puntos_cuadrante = [p for p in puntos_contorno if filtro_cuadrante(p, mid_x, mid_y)]
-    return _encontrar_punto_mas_cercano_a_otro(puntos_cuadrante, coordenada_esquina_absoluta)
+def _clasificar_esquinas_del_rectangulo(esquinas_rectangulo, centro_x, centro_y, angulo_grados):
+    """Etiqueta las 4 esquinas de cv2.boxPoints() como TL/TR/BR/BL."""
+    # Comparamos contra el centro usando los ejes PROPIOS del rectangulo (girados
+    # segun angulo_grados), no arriba/izquierda del mundo: con ejes del mundo, un
+    # rectangulo rotado cerca de 45 grados puede dejar dos esquinas del mismo lado
+    # y ninguna del otro. Los ejes propios siempre separan las 4, sin importar el angulo.
+    angulo_rad = np.radians(angulo_grados)
+    eje_derecha = np.array([np.cos(angulo_rad), np.sin(angulo_rad)])
+    eje_abajo = np.array([-np.sin(angulo_rad), np.cos(angulo_rad)])
+    centro = np.array([centro_x, centro_y])
 
-def detectar_esquinas_de_pieza(contour_pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Detecta las 4 esquinas base (TL, TR, BR, BL) de la pieza."""
-    """Supone una pieza, balanceada, sino se rompe, ver detectar_esquinas_de_pieza_desde_mascara"""
+    esquina_top_left = esquina_top_right = esquina_bottom_right = esquina_bottom_left = None
 
-    x_inicio, x_fin = np.min(contour_pts[:, 0]), np.max(contour_pts[:, 0])
-    y_inicio, y_fin = np.min(contour_pts[:, 1]), np.max(contour_pts[:, 1])
+    for punto in esquinas_rectangulo:
+        vector_desde_centro = np.asarray(punto) - centro
+        a_la_derecha = np.dot(vector_desde_centro, eje_derecha) >= 0
+        hacia_abajo = np.dot(vector_desde_centro, eje_abajo) >= 0
 
-    esquina_top_left_absoluta = (x_inicio, y_inicio)
-    esquina_top_right_absoluta = (x_fin, y_inicio)
-    esquina_bottom_right_absoluta = (x_fin, y_fin)
-    esquina_bottom_left_absoluta = (x_inicio, y_fin)
+        if not hacia_abajo and not a_la_derecha:
+            esquina_top_left = punto
+        elif not hacia_abajo and a_la_derecha:
+            esquina_top_right = punto
+        elif hacia_abajo and a_la_derecha:
+            esquina_bottom_right = punto
+        else:
+            esquina_bottom_left = punto
 
-    esquina_top_left = _encontrar_punto_esquina(contour_pts, _punto_a_la_izquierda_y_por_encima, esquina_top_left_absoluta)
-    esquina_top_right = _encontrar_punto_esquina(contour_pts, _punto_a_la_derecha_y_por_encima, esquina_top_right_absoluta)
-    esquina_bottom_right = _encontrar_punto_esquina(contour_pts, _punto_a_la_derecha_y_por_debajo, esquina_bottom_right_absoluta)
-    esquina_bottom_left = _encontrar_punto_esquina(contour_pts, _punto_a_la_izquierda_y_por_debajo, esquina_bottom_left_absoluta)
- 
+    return esquina_top_left, esquina_top_right, esquina_bottom_right, esquina_bottom_left
+
+def detectar_esquinas_de_pieza(contour_pts: np.ndarray, bounding_box_real:Optional[tuple[int,int,int,int]]= None) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Detecta las 4 esquinas base (TL, TR, BR, BL) de la pieza.
+    Supone una pieza, balanceada, sino se rompe, ver detectar_esquinas_de_pieza_desde_mascara."""
+    # cv2.minAreaRect da el rectangulo mas chico (pudiendo estar rotado) que contiene
+    # el contorno. A diferencia del bounding box derecho, gira junto con la pieza, asi
+    # que sus 4 esquinas son una referencia confiable sin importar cuanto este rotada.
+    rectangulo = cv2.minAreaRect(contour_pts.astype(np.float32))
+    esquinas_rectangulo = cv2.boxPoints(rectangulo)
+    (centro_x, centro_y), _, angulo_grados = rectangulo
+
+    esquina_top_left_absoluta, esquina_top_right_absoluta, esquina_bottom_right_absoluta, esquina_bottom_left_absoluta = \
+        _clasificar_esquinas_del_rectangulo(esquinas_rectangulo, centro_x, centro_y, angulo_grados)
+
+    # Buscamos el punto real del contorno mas cercano a cada esquina esperada, sin
+    # restringir a un cuadrante: al partir de una referencia que rota con la pieza no hace falta.
+    esquina_top_left = _encontrar_punto_mas_cercano_a_otro(contour_pts, esquina_top_left_absoluta)
+    esquina_top_right = _encontrar_punto_mas_cercano_a_otro(contour_pts, esquina_top_right_absoluta)
+    esquina_bottom_right = _encontrar_punto_mas_cercano_a_otro(contour_pts, esquina_bottom_right_absoluta)
+    esquina_bottom_left = _encontrar_punto_mas_cercano_a_otro(contour_pts, esquina_bottom_left_absoluta)
+
     return np.array(esquina_top_left), np.array(esquina_top_right), np.array(esquina_bottom_right), np.array(esquina_bottom_left)
 
 def encontrar_gaps_en_arreglo(arreglo: np.ndarray):
@@ -148,8 +156,13 @@ def llenar_gaps_verticales(mascara:np.ndarray):
 def llenar_gaps_horizontales(mascara:np.ndarray):
     return llenar_gaps_verticales(mascara.T).T
 
-def detectar_esquinas_de_pieza_desde_mascara(mascara: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def detectar_esquinas_de_pieza_desde_mascara(mascara: np.ndarray, bounding_box_real: Optional[tuple[int, int, int, int]] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Detecta las 4 esquinas base (TL, TR, BR, BL) de la pieza."""
+
+    if bounding_box_real:
+        # si conocemos el centro, no hace falta hacer nada de esto
+        contorno = extraer_contorno_externo(mascara)
+        return detectar_esquinas_de_pieza(contorno, bounding_box_real=bounding_box_real)
 
     coordenadas_y, coordenadas_x = np.where(mascara)
     y_inicio, y_final = np.min(coordenadas_y), np.max(coordenadas_y)
@@ -189,6 +202,7 @@ detect_jigsaw_corners = detectar_esquinas_de_pieza
 def pasar_borde_a_1d(
     puntos_contorno_borde: np.ndarray,
     nombre_lado: str = "NORTE",
+    centro_referencia: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     """
     Proyecta una curva 2D de contorno respecto a la recta que une sus extremos
@@ -199,7 +213,7 @@ def pasar_borde_a_1d(
 
     punto_inicio_borde = puntos_contorno_borde[0].astype(np.float32)
     punto_final_borde = puntos_contorno_borde[-1].astype(np.float32)
-    
+
     distancia = np.linalg.norm(punto_final_borde - punto_inicio_borde)
     if distancia == 0:
         return {
@@ -211,19 +225,31 @@ def pasar_borde_a_1d(
             "mean_dev": 0.0,
         }
 
-    # El del norte es contrario porque cuando baja es mas grande, lo mismo oeste para la derecha.
-    lado_u = nombre_lado.upper()
-    if lado_u == "NORTE":
-        eje_de_movimento = np.array([0.0, -1.0])
-    elif lado_u == "SUR":
-        eje_de_movimento = np.array([0.0, 1.0])
-    elif lado_u == "OESTE":
-        eje_de_movimento = np.array([-1.0, 0.0])
-    elif lado_u == "ESTE":
-        eje_de_movimento = np.array([1.0, 0.0])
+    if centro_referencia is not None:
+        # La pieza puede estar rotada, asi que "NORTE" ya no es siempre "arriba" en el
+        # mundo: el eje sale de la direccion real del borde, con el sentido perpendicular
+        # que apunta hacia afuera del centro (alejandose de centro_referencia).
+        direccion_movimiento = (punto_final_borde - punto_inicio_borde) / distancia
+        eje_de_movimento = np.array([-direccion_movimiento[1], direccion_movimiento[0]])
+        punto_medio_borde = (punto_inicio_borde + punto_final_borde) / 2
+        if np.dot(eje_de_movimento, punto_medio_borde - np.asarray(centro_referencia, dtype=np.float32)) < 0:
+            eje_de_movimento = -eje_de_movimento
     else:
-        raise ValueError("Nombre de Borde no Valido")
-    
+        # Sin centro de referencia asumimos que la pieza no esta rotada (por ejemplo,
+        # geometria recien generada), y "NORTE" sigue siendo "arriba" en el mundo.
+        # El del norte es contrario porque cuando baja es mas grande, lo mismo oeste para la derecha.
+        lado_u = nombre_lado.upper()
+        if lado_u == "NORTE":
+            eje_de_movimento = np.array([0.0, -1.0])
+        elif lado_u == "SUR":
+            eje_de_movimento = np.array([0.0, 1.0])
+        elif lado_u == "OESTE":
+            eje_de_movimento = np.array([-1.0, 0.0])
+        elif lado_u == "ESTE":
+            eje_de_movimento = np.array([1.0, 0.0])
+        else:
+            raise ValueError("Nombre de Borde no Valido")
+
     silueta_de_borde = puntos_contorno_borde.astype(np.float32) - punto_inicio_borde
     cambio_profundidad_a_lo_largo_del_borde = np.dot(silueta_de_borde, eje_de_movimento)
  
@@ -288,6 +314,7 @@ def detect_corners_and_split_sides(
     contour_pts: np.ndarray,
     binary_mask: np.ndarray,
     imagen_rgb: Optional[np.ndarray] = None,
+    bounding_box_real: Optional[tuple[int, int, int, int]] = None
 ) -> Dict[str, Any]:
     """
     Segmenta el contorno en los 4 lados orientados (NORTE, ESTE, SUR, OESTE)
@@ -295,7 +322,7 @@ def detect_corners_and_split_sides(
     """
 
     binary_mask_booleana = binary_mask > 0
-    esquina_top_left, esquina_top_right, esquina_bottom_right, esquina_bottom_left = detectar_esquinas_de_pieza_desde_mascara(binary_mask_booleana)
+    esquina_top_left, esquina_top_right, esquina_bottom_right, esquina_bottom_left = detectar_esquinas_de_pieza_desde_mascara(binary_mask_booleana, bounding_box_real)
  
     idx_top_left = encontra_indice_de_punto_en_arreglo_puntos(contour_pts, esquina_top_left)
     
@@ -322,10 +349,12 @@ def detect_corners_and_split_sides(
         silueta_borde_sur = bordes[2]
         silueta_borde_oeste = bordes[3]
  
-    informacion_silueta_norte = pasar_borde_a_1d(silueta_borde_norte, "NORTE")
-    informacion_silueta_este = pasar_borde_a_1d(silueta_borde_este, "ESTE")
-    informacion_silueta_sur = pasar_borde_a_1d(silueta_borde_sur, "SUR")
-    informacion_silueta_oeste = pasar_borde_a_1d(silueta_borde_oeste, "OESTE")
+    centro_pieza = np.mean([esquina_top_left, esquina_top_right, esquina_bottom_right, esquina_bottom_left], axis=0)
+
+    informacion_silueta_norte = pasar_borde_a_1d(silueta_borde_norte, "NORTE", centro_referencia=centro_pieza)
+    informacion_silueta_este = pasar_borde_a_1d(silueta_borde_este, "ESTE", centro_referencia=centro_pieza)
+    informacion_silueta_sur = pasar_borde_a_1d(silueta_borde_sur, "SUR", centro_referencia=centro_pieza)
+    informacion_silueta_oeste = pasar_borde_a_1d(silueta_borde_oeste, "OESTE", centro_referencia=centro_pieza)
 
     descriptor_borde_norte = (silueta_borde_norte, informacion_silueta_norte) 
     descriptor_borde_este = (silueta_borde_este, informacion_silueta_este)
