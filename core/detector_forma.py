@@ -10,7 +10,7 @@ Permite:
 from typing import Dict, List, Tuple, Any, Optional
 from core.geometria_jigsaw import MINIMO_CONTENIDO_MASCARA_FLOAT, MINIMO_CONTENIDO_MASCARA_INT
 import numpy as np
-from skimage.morphology import erosion, dilation
+from skimage.morphology import erosion, dilation, closing, disk
 import cv2
 
 __all__ = [
@@ -43,8 +43,19 @@ def generar_mascara_de_pieza(pieza: np.ndarray) -> np.ndarray:
         canal_maximo = np.max(pieza, axis=2)
     else:
         canal_maximo = pieza
- 
+
     binary = (canal_maximo >= umbral_invariante_mascara_contenido).astype(np.uint8) * 255
+    
+    binary = closing(binary, disk(3))
+    
+    
+    
+    
+    
+    
+    
+    
+    
     return binary
 
 # mantenemos un alias a las funciones originales para que no se rompa todo en caso de que alguien l a este usando
@@ -364,7 +375,7 @@ def detect_corners_and_split_sides(
     descriptor_borde_este = (silueta_borde_este, informacion_silueta_este)
     descriptor_borde_sur = (silueta_borde_sur, informacion_silueta_sur)
     descriptor_borde_oeste = (silueta_borde_oeste, informacion_silueta_oeste)
- 
+
     #Perfil de color a lo largo de cada costura
     #Sigue la CURVA del encastre, no una columna recta: por eso hace falta la imagen ademas del contorno.
     if imagen_rgb is not None:
