@@ -10,8 +10,7 @@ Permite:
 from typing import Dict, List, Tuple, Any, Optional
 from core.geometria_jigsaw import MINIMO_CONTENIDO_MASCARA_FLOAT, MINIMO_CONTENIDO_MASCARA_INT
 import numpy as np
-from skimage.morphology.binary import binary_erosion, binary_dilation, binary_closing
-from skimage.morphology import disk
+from skimage.morphology import erosion, dilation
 import cv2
 
 __all__ = [
@@ -117,8 +116,13 @@ def detectar_esquinas_de_pieza(contour_pts: np.ndarray, bounding_box_real:Option
     # el contorno. A diferencia del bounding box derecho, gira junto con la pieza, asi
     # que sus 4 esquinas son una referencia confiable sin importar cuanto este rotada.
     rectangulo = cv2.minAreaRect(contour_pts.astype(np.float32))
-    esquinas_rectangulo = cv2.boxPoints(rectangulo)
     (centro_x, centro_y), _, angulo_grados = rectangulo
+    
+    # solo giramos para adelante
+    angulo_grados = angulo_grados % 90
+    
+    rectangulo = (centro_x, centro_y), _, angulo_grados 
+    esquinas_rectangulo = cv2.boxPoints(rectangulo)
 
     esquina_top_left_absoluta, esquina_top_right_absoluta, esquina_bottom_right_absoluta, esquina_bottom_left_absoluta = \
         _clasificar_esquinas_del_rectangulo(esquinas_rectangulo, centro_x, centro_y, angulo_grados)
@@ -179,10 +183,10 @@ def detectar_esquinas_de_pieza_desde_mascara(mascara: np.ndarray, bounding_box_r
     kernel_horizontal = np.ones((1, int(ancho//1.75)))
 
     mascara_fondo = ~mascara_cerrada
-    fondo_dilatado_verticalmente = binary_dilation(mascara_fondo, kernel_vertical)
-    fondo_con_muescas_horizontales = binary_erosion(fondo_dilatado_verticalmente, kernel_vertical)
-    fondo_dilatado_horizontalmente = binary_dilation(fondo_con_muescas_horizontales, kernel_horizontal)
-    fondo_con_muescas = binary_erosion(fondo_dilatado_horizontalmente, kernel_horizontal)
+    fondo_dilatado_verticalmente = dilation(mascara_fondo, kernel_vertical)
+    fondo_con_muescas_horizontales = erosion(fondo_dilatado_verticalmente, kernel_vertical)
+    fondo_dilatado_horizontalmente = dilation(fondo_con_muescas_horizontales, kernel_horizontal)
+    fondo_con_muescas = erosion(fondo_dilatado_horizontalmente, kernel_horizontal)
 
     mascara_rectangulo = ~fondo_con_muescas
     mascara_binaria = (mascara_rectangulo).astype(np.uint8) * 255
