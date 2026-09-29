@@ -607,7 +607,7 @@ class DegradadorRotacion(DegradadorPorPieza):
 
 # Composicion de Rotar y agregar lineas para que el angulo de las lineas y rotacion sean el mismo
 class DegradadorRotacionYLineasAlMismoAngulo(DegradadorRotacion):
-    def __init__(self, angulo:Union[RangoFlotante, float], amplitud:float=0.3, cantidad_lineas:int= 50):
+    def __init__(self, angulo:Union[RangoFlotante, float], amplitud:float=0.3, cantidad_lineas:int= 45):
         super().__init__(angulo)
 
         # Dejo todo en nulo, lo voy a setear por aplicacion
@@ -618,29 +618,36 @@ class DegradadorRotacionYLineasAlMismoAngulo(DegradadorRotacion):
     def nombre(self) -> str:
         return "rotar_y_agregar_lineas"
 
-    def __actualizar_degradador_lineas_a_nuevo_angulo(self, angulo):
+    def __actualizar_degradador_lineas_a_nuevo_angulo(self, angulo, alto_original, alto_rotado, ancho_rotado):
 
-        # Probe combinaciones hasta que funciono, puede ser que sea equivalente a algo
-        # donde fila sea seno y columna sea coseno
-        # da igual la verdad.
-        cambio_en_columna = self.cantidad_lineas * np.sin(np.radians(angulo))
-        cambio_en_fila = self.cantidad_lineas * np.cos(np.radians(angulo))
-
-        if cambio_en_columna > 0:
-            cambio_en_columna = cambio_en_columna
-            cambio_en_fila = -cambio_en_fila
+        # Rotamos el vector de onda (cantidad_lineas, 0) -- lineas horizontales
+        # en el marco sin rotar -- por el mismo angulo que rotar() le aplico a
+        # la pieza, para que las lineas queden pegadas a la rotacion.
+        #
+        # __generar_grilla_fase_espacial normaliza desplazamiento_fila/columna
+        # por el alto/ancho de la imagen a la que se le aplican (la pieza ya
+        # rotada), pero cantidad_lineas fue pensado en terminos del alto de la
+        # pieza SIN rotar. Si la pieza no es cuadrada, o rotar() le agrego
+        # padding, hay que reescalar cada componente por el cociente de
+        # tamanos para que el angulo resultante no se deforme.
+        angulo_rad = np.radians(angulo)
+        cambio_en_fila = self.cantidad_lineas * np.cos(angulo_rad) * (alto_rotado / alto_original)
+        cambio_en_columna = -self.cantidad_lineas * np.sin(angulo_rad) * (ancho_rotado / alto_original)
 
         self.degradadorFrecuenciaDeterministica.desplazamiento_fila = cambio_en_fila
         self.degradadorFrecuenciaDeterministica.desplazamiento_columna = cambio_en_columna
 
     def _aplicar_degradacion(self, pieza: Pieza, indice: int, generador: Generator):
 
+        alto_original, _ = pieza.imagen.shape[:2]
+
         super()._aplicar_degradacion(pieza, indice, generador)
 
         angulo = self.argumentos_por_pieza[pieza.id]["angulo"]
+        alto_rotado, ancho_rotado = pieza.imagen.shape[:2]
 
-        self.__actualizar_degradador_lineas_a_nuevo_angulo(angulo)
-        
+        self.__actualizar_degradador_lineas_a_nuevo_angulo(angulo, alto_original, alto_rotado, ancho_rotado)
+
         self.degradadorFrecuenciaDeterministica._aplicar_degradacion(pieza, indice, generador)
 
         self.argumentos_por_pieza[pieza.id].update({

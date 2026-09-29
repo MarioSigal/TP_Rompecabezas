@@ -17,7 +17,8 @@ from .degradaciones import (
     sortear_variante_nivel2,
     DegradacionPorPiezaNivel2,
     TramaMixtaPorPieza,
-    DegradacionPorPiezaRotacion
+    DegradacionPorPiezaRotacion,
+    DegradacionPorPiezaRotacionYLineasAlMismoAngulo
     )
 
 try:
@@ -656,10 +657,8 @@ def crear_rompecabezas_nivel(
 
     elif nivel == 5:
         
-        amplitud_rayas = kwargs.get("amplitud_rayas", 0.10)
-        #TODO: CHEQUEAR ESTO
-        degradador_rayas = lambda imagen, generador: imagen
-        degradador_rotar = DegradacionPorPiezaRotacion()
+        amplitud_rayas = kwargs.get("amplitud_rayas", 0.30)
+        degradador_rotar_mas_rayas = DegradacionPorPiezaRotacionYLineasAlMismoAngulo(amplitud=amplitud_rayas)
 
         return armar_caso_rompecabezas(
             imagen_base=img_ajustada,
@@ -667,11 +666,11 @@ def crear_rompecabezas_nivel(
             cantidad_columnas=columnas,
             semilla=semilla,
             tiene_ranuras=True,
-            degradacion_global= degradador_rayas,
-            degradacion_por_pieza=degradador_rotar,
+            degradacion_global= None,
+            degradacion_por_pieza=degradador_rotar_mas_rayas,
             metadatos_adicionales={
                 "nivel": 5,
-                "degradador": degradador_rotar
+                "degradador": degradador_rotar_mas_rayas
             }
         )
 

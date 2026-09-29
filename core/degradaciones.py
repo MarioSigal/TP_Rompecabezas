@@ -480,7 +480,7 @@ class DegradacionPorPiezaRotacion:
     def __call__(self, pieza:np.ndarray, indice: int, generador: np.random.Generator, mascara: Optional[BoolArray] = None) -> ActualizacionDePieza:
 
         if self.fake_jitter == None:
-            jitter = float(generador.uniform(5.0, 60.0))
+            jitter = float(int(generador.uniform(5.0, 60.0)))
         else:
             jitter = self.fake_jitter
 
@@ -527,19 +527,25 @@ class DegradacionPorPiezaRotacionYLineasAlMismoAngulo:
 
     def __call__(self, pieza:np.ndarray, indice:int, generador:np.random.Generator, mascara:Optional[BoolArray] = None) -> ActualizacionDePieza:
         pieza_rotada, mascara_rotada = self.degradador_por_rotacion(pieza, indice, generador, mascara)
-        angulo_de_rotacion = self.degradador_por_rotacion.parametros_por_pieza[indice]["jitter"]
+        jitter = self.degradador_por_rotacion.parametros_por_pieza[indice]["jitter"]
 
-        periodo = 50
+        periodo = 45
 
-        # Probe combinaciones hasta que funciono, puede ser que sea equivalente a algo
-        # donde fila sea seno y columna sea coseno
-        # da igual la verdad.
-        cambio_en_columna = periodo * np.sin(np.radians(angulo_de_rotacion))
-        cambio_en_fila = periodo * np.cos(np.radians(angulo_de_rotacion))
-
-        if cambio_en_columna > 0:
-            cambio_en_columna = cambio_en_columna
-            cambio_en_fila = -cambio_en_fila
+        # Rotamos el vector de onda (periodo, 0) -- lineas horizontales en el
+        # marco sin rotar -- por el mismo angulo que enderezar_pieza le aplico
+        # a la pieza, para que las lineas queden pegadas a la rotacion.
+        #
+        # agregar_onda normaliza desplazamiento_fila/columna por el alto/ancho
+        # de la imagen a la que se le aplican (la pieza ya rotada), pero el
+        # periodo original fue pensado en terminos del alto de la pieza SIN
+        # rotar. Si la pieza no es cuadrada, hay que reescalar cada componente
+        # por el cociente de tamanos para que el angulo resultante no se
+        # deforme.
+        angulo_de_rotacion = np.radians(jitter)
+        alto_original, ancho_original = pieza.shape[:2]
+        alto_rotado, ancho_rotado = pieza_rotada.shape[:2]
+        cambio_en_fila = periodo * np.cos(angulo_de_rotacion) * (alto_rotado / alto_original)
+        cambio_en_columna = -periodo * np.sin(angulo_de_rotacion) * (ancho_rotado / alto_original)
         
         # Lo hago con el objeto para no meter el codigo de manejo de mascara aca
         degradador_lineas = DegradacionAgregarFrecuenciaUnicaPorPieza(cambio_en_fila, cambio_en_columna, amplitud=self.amplitud)
